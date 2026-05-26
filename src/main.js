@@ -323,6 +323,7 @@ async function makeMove(index) {
       }
 
       room.board[index] = state.playerSymbol;
+      room.lastMove = index;
 
       const boardSize = room.boardSize || DEFAULT_BOARD_SIZE;
       const rules = room.rules || {};
@@ -360,6 +361,7 @@ async function restartGame() {
 
       room.board = createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
       room.winner = "";
+      room.lastMove = null;
       room.currentTurn = "X";
       room.status = room.players?.X && room.players?.O ? "playing" : "waiting";
       room.updatedAt = Date.now();
@@ -515,7 +517,7 @@ function render() {
             .map(
               (cell, index) => `
                 <button
-                  class="cell ${cell ? `mark-${cell.toLowerCase()}` : ""}"
+                  class="cell ${cell ? `mark-${cell.toLowerCase()}` : ""} ${index === state.roomData?.lastMove ? "last-move" : ""}"
                   data-index="${index}"
                   ${boardDisabled(index) ? "disabled" : ""}
                   aria-label="Ô ${index + 1}"
@@ -524,6 +526,26 @@ function render() {
             )
             .join("")}
         </div>
+
+        ${(() => {
+          const status = state.roomData?.status;
+          if (status !== "won" && status !== "draw") return "";
+          const winnerSymbol = state.roomData?.winner;
+          const escapedWinnerSymbol = winnerSymbol ? escapeHtml(winnerSymbol) : "";
+          const winnerName = winnerSymbol
+            ? escapeHtml(state.roomData?.players?.[winnerSymbol]?.name || winnerSymbol)
+            : "";
+          const isWon = status === "won";
+          return `
+          <div class="win-overlay">
+            <div class="win-card">
+              <div class="win-emoji">${isWon ? "🎉" : "🤝"}</div>
+              <h2>${isWon ? "Chúc mừng!" : "Hòa!"}</h2>
+              <p>${isWon ? `<strong>${winnerName}</strong> (${escapedWinnerSymbol}) đã thắng!` : "Ván cờ kết thúc hòa."}</p>
+              <button id="overlay-restart-btn">Chơi lại</button>
+            </div>
+          </div>`;
+        })()}
       </section>
     </main>
   `;
@@ -564,6 +586,7 @@ function render() {
   });
 
   document.querySelector("#restart-btn")?.addEventListener("click", restartGame);
+  document.querySelector("#overlay-restart-btn")?.addEventListener("click", restartGame);
   document.querySelector("#leave-btn")?.addEventListener("click", leaveRoom);
   document.querySelectorAll(".cell").forEach((cell) => {
     cell.addEventListener("click", async () => {
