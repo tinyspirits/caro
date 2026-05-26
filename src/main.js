@@ -359,6 +359,13 @@ async function restartGame() {
         return room;
       }
 
+      // Swap X and O players after each game
+      if (room.players) {
+        const temp = room.players.X;
+        room.players.X = room.players.O;
+        room.players.O = temp;
+      }
+
       room.board = createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
       room.winner = "";
       room.lastMove = null;
