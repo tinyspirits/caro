@@ -19,6 +19,7 @@ const state = {
   playerName: savedPlayer.name || "",
   roomId: "",
   playerSymbol: "",
+  isViewer: false,
   roomData: null,
   unsubscribeRoom: null,
   error: "",
@@ -221,6 +222,16 @@ async function joinRoom({ roomId, playerName }) {
     const playerSymbol = joinRoomSymbol(room);
 
     if (!playerSymbol) {
+      if (room?.players?.X && room?.players?.O) {
+        // Room is full — join as viewer
+        subscribeToRoom(normalizedRoomId);
+        state.roomId = normalizedRoomId;
+        state.playerSymbol = "";
+        state.isViewer = true;
+        state.error = "";
+        render();
+        return;
+      }
       state.error = "Phòng đã đủ 2 người chơi. Hãy dùng mã phòng khác.";
       render();
       return;
@@ -229,6 +240,7 @@ async function joinRoom({ roomId, playerName }) {
     subscribeToRoom(normalizedRoomId);
     state.roomId = normalizedRoomId;
     state.playerSymbol = playerSymbol;
+    state.isViewer = false;
     state.error = "";
     render();
   } catch (error) {
@@ -251,6 +263,7 @@ function subscribeToRoom(roomId) {
       if (!state.roomData) {
         state.roomId = "";
         state.playerSymbol = "";
+        state.isViewer = false;
         state.error = "Phòng đã bị đóng.";
       } else {
         state.playerSymbol = joinRoomSymbol(state.roomData);
@@ -266,7 +279,31 @@ function subscribeToRoom(roomId) {
 }
 
 async function leaveRoom() {
-  if (!state.roomId || !state.playerSymbol) {
+  if (!state.roomId) {
+    state.roomId = "";
+    state.playerSymbol = "";
+    state.isViewer = false;
+    state.roomData = null;
+    render();
+    return;
+  }
+
+  // Viewers are not stored in Firebase — just unsubscribe locally
+  if (state.isViewer) {
+    if (state.unsubscribeRoom) {
+      state.unsubscribeRoom();
+      state.unsubscribeRoom = null;
+    }
+    state.roomId = "";
+    state.playerSymbol = "";
+    state.isViewer = false;
+    state.roomData = null;
+    state.error = "";
+    render();
+    return;
+  }
+
+  if (!state.playerSymbol) {
     state.roomId = "";
     state.playerSymbol = "";
     state.roomData = null;
@@ -309,6 +346,7 @@ async function leaveRoom() {
 
   state.roomId = "";
   state.playerSymbol = "";
+  state.isViewer = false;
   state.roomData = null;
   state.error = "";
   render();
@@ -415,6 +453,7 @@ function boardDisabled(index) {
     state.roomData.status !== "playing" ||
     state.roomData.currentTurn !== state.playerSymbol ||
     !state.playerSymbol ||
+    state.isViewer ||
     Boolean(state.roomData.board?.[index])
   );
 }
@@ -502,7 +541,7 @@ function render() {
 
         <div class="card info">
           <p><strong>Phòng:</strong> ${state.roomId || "Chưa tham gia"}</p>
-          <p><strong>Vai trò:</strong> ${state.playerSymbol || "Khách"}</p>
+          <p><strong>Vai trò:</strong> ${state.isViewer ? "Người xem" : state.playerSymbol || "Khách"}</p>
           ${isInRoom ? `<p><strong>Bàn cờ:</strong> ${boardSize}x${boardSize}</p>` : ""}
           ${isInRoom ? `<p><strong>Luật:</strong> ${escapeHtml(blockBothEndsLabel)}</p>` : ""}
           <p><strong>Trạng thái:</strong> ${gameStatusText()}</p>
@@ -510,7 +549,7 @@ function render() {
         </div>
 
         <div class="actions">
-          <button id="restart-btn" ${state.roomId ? "" : "disabled"}>Chơi lại</button>
+          <button id="restart-btn" ${state.roomId && !state.isViewer ? "" : "disabled"}>Chơi lại</button>
           <button id="leave-btn" class="ghost" ${state.roomId ? "" : "disabled"}>Rời phòng</button>
         </div>
       </section>
