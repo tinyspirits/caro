@@ -124,9 +124,9 @@ function countDirection(board, row, col, dr, dc, symbol, boardSize) {
 }
 
 function isEndBlocked(board, row, col, boardSize, symbol) {
-  // Out of bounds → board edge counts as blocked
+  // Out of bounds → board edge is open (not blocked)
   if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
-    return true;
+    return false;
   }
   const cell = board[row * boardSize + col];
   // Blocked only by an opponent's piece directly at this cell; empty = open
