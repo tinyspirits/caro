@@ -7,24 +7,24 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg-root: #1a0d08;
-  --bg-body-gradient: rgba(120, 60, 20, 0.22);
-  --bg-body-base: #0d0603;
-  --text-primary: #f5e6d3;
-  --text-subtitle: #c4a882;
-  --card-bg: rgba(42, 20, 10, 0.8);
-  --card-border: rgba(196, 168, 130, 0.18);
-  --input-bg: #0d0603;
-  --input-border: #5c3a28;
-  --ghost-bg: #3d1f12;
-  --cell-bg: #150a05;
-  --cell-border: #5c3a28;
-  --player-card-bg: rgba(42, 20, 10, 0.85);
-  --player-span-bg: #2d1810;
-  --board-bg: rgba(42, 20, 10, 0.7);
+  --bg-root: #0d0818;
+  --bg-body-gradient: rgba(88, 28, 135, 0.28);
+  --bg-body-base: #070512;
+  --text-primary: #ede9fe;
+  --text-subtitle: #a78bfa;
+  --card-bg: rgba(26, 10, 56, 0.85);
+  --card-border: rgba(139, 92, 246, 0.22);
+  --input-bg: #0d0818;
+  --input-border: #4c1d95;
+  --ghost-bg: #1e1040;
+  --cell-bg: #0d0818;
+  --cell-border: #3b1878;
+  --player-card-bg: rgba(26, 10, 56, 0.9);
+  --player-span-bg: #2d1b69;
+  --board-bg: rgba(26, 10, 56, 0.7);
   --error-color: #fca5a5;
-  --mark-x-color: #38bdf8;
-  --mark-o-color: #fb7185;
+  --mark-x-color: #e879f9;
+  --mark-o-color: #22d3ee;
   background: var(--bg-root);
   color: var(--text-primary);
 }
@@ -47,8 +47,8 @@
   --player-span-bg: #f5e6d3;
   --board-bg: rgba(255, 248, 240, 0.7);
   --error-color: #b91c1c;
-  --mark-x-color: #1d4ed8;
-  --mark-o-color: #be185d;
+  --mark-x-color: #7c3aed;
+  --mark-o-color: #0891b2;
   background: var(--bg-root);
   color: var(--text-primary);
 }
@@ -186,8 +186,8 @@ p {
 }
 
 .player-card.active {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.35);
 }
 
 .board {
