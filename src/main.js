@@ -31,13 +31,17 @@ localStorage.setItem(
   JSON.stringify({ id: state.playerId, name: state.playerName }),
 );
 
+function clampBoardSize(size) {
+  return Math.max(5, Math.min(50, size || DEFAULT_BOARD_SIZE));
+}
+
 function createEmptyBoard(boardSize) {
   return Array(boardSize * boardSize).fill("");
 }
 
 function createRoomData(name) {
   const boardSize = state.settings.useCustomSize
-    ? Math.max(5, Math.min(50, state.settings.customBoardSize || DEFAULT_BOARD_SIZE))
+    ? clampBoardSize(state.settings.customBoardSize)
     : state.settings.boardSize;
   return {
     board: createEmptyBoard(boardSize),
@@ -530,7 +534,8 @@ function render() {
   document.querySelector("#custom-size-input")?.addEventListener("change", (event) => {
     const val = parseInt(event.target.value, 10);
     if (!isNaN(val)) {
-      state.settings.customBoardSize = Math.max(5, Math.min(50, val));
+      state.settings.customBoardSize = clampBoardSize(val);
+      render();
     }
   });
 
