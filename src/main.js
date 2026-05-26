@@ -2,9 +2,10 @@ import { onValue, ref, runTransaction } from "firebase/database";
 import { database } from "./firebase";
 import "./style.css";
 
-const BOARD_SIZE = 15;
 const WIN_LENGTH = 5;
 const STORAGE_KEY = "caro-online-player";
+const BOARD_SIZE_PRESETS = [15, 30];
+const DEFAULT_BOARD_SIZE = 15;
 
 const savedPlayer = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
 
@@ -16,6 +17,13 @@ const state = {
   roomData: null,
   unsubscribeRoom: null,
   error: "",
+  // Settings used when creating a new room
+  settings: {
+    boardSize: DEFAULT_BOARD_SIZE,
+    customBoardSize: 20,
+    useCustomSize: false,
+    blockBothEnds: false,
+  },
 };
 
 localStorage.setItem(
@@ -23,13 +31,22 @@ localStorage.setItem(
   JSON.stringify({ id: state.playerId, name: state.playerName }),
 );
 
-function createEmptyBoard() {
-  return Array(BOARD_SIZE * BOARD_SIZE).fill("");
+function clampBoardSize(size) {
+  return Math.max(5, Math.min(50, size || DEFAULT_BOARD_SIZE));
+}
+
+function createEmptyBoard(boardSize) {
+  return Array(boardSize * boardSize).fill("");
 }
 
 function createRoomData(name) {
+  const boardSize = state.settings.useCustomSize
+    ? clampBoardSize(state.settings.customBoardSize)
+    : state.settings.boardSize;
   return {
-    board: createEmptyBoard(),
+    board: createEmptyBoard(boardSize),
+    boardSize,
+    rules: { blockBothEnds: state.settings.blockBothEnds },
     currentTurn: "X",
     status: "waiting",
     winner: "",
@@ -42,9 +59,9 @@ function createRoomData(name) {
   };
 }
 
-function checkWinner(board, index, symbol) {
-  const row = Math.floor(index / BOARD_SIZE);
-  const col = index % BOARD_SIZE;
+function checkWinner(board, index, symbol, boardSize, rules) {
+  const row = Math.floor(index / boardSize);
+  const col = index % boardSize;
   const directions = [
     [0, 1],
     [1, 0],
@@ -53,11 +70,22 @@ function checkWinner(board, index, symbol) {
   ];
 
   for (const [dr, dc] of directions) {
-    let count = 1;
-    count += countDirection(board, row, col, dr, dc, symbol);
-    count += countDirection(board, row, col, -dr, -dc, symbol);
+    const fwd = countDirection(board, row, col, dr, dc, symbol, boardSize);
+    const bwd = countDirection(board, row, col, -dr, -dc, symbol, boardSize);
+    const count = 1 + fwd + bwd;
 
     if (count >= WIN_LENGTH) {
+      if (rules?.blockBothEnds) {
+        const fwdEndRow = row + (fwd + 1) * dr;
+        const fwdEndCol = col + (fwd + 1) * dc;
+        const bwdEndRow = row - (bwd + 1) * dr;
+        const bwdEndCol = col - (bwd + 1) * dc;
+        const fwdBlocked = isEndBlocked(board, fwdEndRow, fwdEndCol, boardSize);
+        const bwdBlocked = isEndBlocked(board, bwdEndRow, bwdEndCol, boardSize);
+        if (fwdBlocked && bwdBlocked) {
+          continue;
+        }
+      }
       return true;
     }
   }
@@ -65,17 +93,17 @@ function checkWinner(board, index, symbol) {
   return false;
 }
 
-function countDirection(board, row, col, dr, dc, symbol) {
+function countDirection(board, row, col, dr, dc, symbol, boardSize) {
   let count = 0;
   let nextRow = row + dr;
   let nextCol = col + dc;
 
   while (
     nextRow >= 0 &&
-    nextRow < BOARD_SIZE &&
+    nextRow < boardSize &&
     nextCol >= 0 &&
-    nextCol < BOARD_SIZE &&
-    board[nextRow * BOARD_SIZE + nextCol] === symbol
+    nextCol < boardSize &&
+    board[nextRow * boardSize + nextCol] === symbol
   ) {
     count += 1;
     nextRow += dr;
@@ -83,6 +111,11 @@ function countDirection(board, row, col, dr, dc, symbol) {
   }
 
   return count;
+}
+
+function isEndBlocked(board, row, col, boardSize) {
+  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) return true;
+  return Boolean(board[row * boardSize + col]);
 }
 
 function getRoomRef(roomId) {
@@ -155,7 +188,7 @@ async function joinRoom({ roomId, playerName }) {
         return room;
       }
 
-      room.board ||= createEmptyBoard();
+      room.board ||= createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
       room.status = room.players.X && room.players.O ? "playing" : "waiting";
       room.currentTurn ||= "X";
       room.updatedAt = Date.now();
@@ -237,7 +270,7 @@ async function leaveRoom() {
       room.status = room.players.X && room.players.O ? "playing" : "waiting";
       room.currentTurn = "X";
       room.winner = "";
-      room.board = createEmptyBoard();
+      room.board = createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
       room.updatedAt = Date.now();
       return room;
     });
@@ -270,7 +303,7 @@ async function makeMove(index) {
         return room;
       }
 
-      room.board ||= createEmptyBoard();
+      room.board ||= createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
 
       if (room.board[index]) {
         return room;
@@ -278,7 +311,9 @@ async function makeMove(index) {
 
       room.board[index] = state.playerSymbol;
 
-      if (checkWinner(room.board, index, state.playerSymbol)) {
+      const boardSize = room.boardSize || DEFAULT_BOARD_SIZE;
+      const rules = room.rules || {};
+      if (checkWinner(room.board, index, state.playerSymbol, boardSize, rules)) {
         room.status = "won";
         room.winner = state.playerSymbol;
         room.currentTurn = "";
@@ -310,7 +345,7 @@ async function restartGame() {
         return room;
       }
 
-      room.board = createEmptyBoard();
+      room.board = createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);
       room.winner = "";
       room.currentTurn = "X";
       room.status = room.players?.X && room.players?.O ? "playing" : "waiting";
@@ -353,8 +388,60 @@ function boardDisabled(index) {
   );
 }
 
+function roomBoardSize() {
+  return state.roomData?.boardSize || DEFAULT_BOARD_SIZE;
+}
+
+function roomRules() {
+  return state.roomData?.rules || {};
+}
+
 function render() {
-  const board = state.roomData?.board || createEmptyBoard();
+  const boardSize = roomBoardSize();
+  const board = state.roomData?.board || createEmptyBoard(boardSize);
+  const isInRoom = Boolean(state.roomId);
+  const currentRules = roomRules();
+  const blockBothEndsLabel = currentRules.blockBothEnds
+    ? "Bị chặn 2 đầu không thắng"
+    : "Chỉ cần 5 là thắng";
+
+  const settingsHtml = !isInRoom
+    ? `
+        <div class="card settings">
+          <p class="settings-title"><strong>Cài đặt phòng mới</strong></p>
+          <label class="settings-label">
+            Kích thước bàn cờ
+            <div class="size-options">
+              ${BOARD_SIZE_PRESETS.map(
+                (size) => `
+                <label class="size-option">
+                  <input type="radio" name="boardSizePreset" value="${size}"
+                    ${state.settings.useCustomSize ? "" : state.settings.boardSize === size ? "checked" : ""} />
+                  ${size}x${size}
+                </label>`,
+              ).join("")}
+              <label class="size-option">
+                <input type="radio" name="boardSizePreset" value="custom"
+                  ${state.settings.useCustomSize ? "checked" : ""} />
+                Tùy chỉnh
+              </label>
+            </div>
+          </label>
+          ${
+            state.settings.useCustomSize
+              ? `<label class="settings-label">
+                  Số ô (5–50)
+                  <input id="custom-size-input" type="number" min="5" max="50" value="${state.settings.customBoardSize}" />
+                </label>`
+              : ""
+          }
+          <label class="settings-label checkbox-label">
+            <input type="checkbox" id="block-both-ends" ${state.settings.blockBothEnds ? "checked" : ""} />
+            Bị chặn 2 đầu không thắng
+          </label>
+        </div>
+      `
+    : "";
 
   const app = document.querySelector("#app");
   app.innerHTML = `
@@ -375,9 +462,13 @@ function render() {
           <button type="submit">Tạo / vào phòng</button>
         </form>
 
+        ${settingsHtml}
+
         <div class="card info">
           <p><strong>Phòng:</strong> ${state.roomId || "Chưa tham gia"}</p>
           <p><strong>Vai trò:</strong> ${state.playerSymbol || "Khách"}</p>
+          ${isInRoom ? `<p><strong>Bàn cờ:</strong> ${boardSize}x${boardSize}</p>` : ""}
+          ${isInRoom ? `<p><strong>Luật:</strong> ${escapeHtml(blockBothEndsLabel)}</p>` : ""}
           <p><strong>Trạng thái:</strong> ${gameStatusText()}</p>
           ${state.error ? `<p class="error">${escapeHtml(state.error)}</p>` : ""}
         </div>
@@ -400,7 +491,8 @@ function render() {
           </div>
         </div>
 
-        <div class="board" role="grid" aria-label="Bàn cờ caro">
+        <div class="board" role="grid" aria-label="Bàn cờ caro"
+          style="grid-template-columns: repeat(${boardSize}, minmax(0, 1fr))">
           ${board
             .map(
               (cell, index) => `
@@ -425,6 +517,30 @@ function render() {
       playerName: String(form.get("playerName") || ""),
       roomId: String(form.get("roomId") || ""),
     });
+  });
+
+  document.querySelectorAll("input[name='boardSizePreset']").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value === "custom") {
+        state.settings.useCustomSize = true;
+      } else {
+        state.settings.useCustomSize = false;
+        state.settings.boardSize = Number(radio.value);
+      }
+      render();
+    });
+  });
+
+  document.querySelector("#custom-size-input")?.addEventListener("change", (event) => {
+    const val = parseInt(event.target.value, 10);
+    if (!isNaN(val)) {
+      state.settings.customBoardSize = clampBoardSize(val);
+      render();
+    }
+  });
+
+  document.querySelector("#block-both-ends")?.addEventListener("change", (event) => {
+    state.settings.blockBothEnds = event.target.checked;
   });
 
   document.querySelector("#restart-btn")?.addEventListener("click", restartGame);
