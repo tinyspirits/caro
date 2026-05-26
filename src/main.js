@@ -108,7 +108,7 @@ function persistPlayerName(name) {
 }
 
 function generateRoomId() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  return crypto.randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase();
 }
 
 function joinRoomSymbol(room) {
@@ -364,13 +364,13 @@ function render() {
         <p class="subtitle">Tạo phòng, gửi mã cho bạn bè và chơi cờ caro trực tuyến theo thời gian thực.</p>
 
         <form id="room-form" class="card form">
-          <label>
+          <label for="player-name">
             Tên của bạn
-            <input name="playerName" maxlength="30" placeholder="Ví dụ: Tiny Spirits" value="${escapeHtml(state.playerName)}" />
+            <input id="player-name" name="playerName" maxlength="30" placeholder="Ví dụ: Tiny Spirits" value="${escapeHtml(state.playerName)}" />
           </label>
-          <label>
+          <label for="room-id">
             Mã phòng
-            <input name="roomId" maxlength="10" placeholder="Để trống để tạo phòng mới" value="${escapeHtml(state.roomId)}" />
+            <input id="room-id" name="roomId" maxlength="10" placeholder="Để trống để tạo phòng mới" value="${escapeHtml(state.roomId)}" />
           </label>
           <button type="submit">Tạo / vào phòng</button>
         </form>
