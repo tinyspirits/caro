@@ -86,8 +86,8 @@ function checkWinner(board, index, symbol, boardSize, rules) {
         const fwdEndCol = col + (fwd + 1) * dc;
         const bwdEndRow = row - (bwd + 1) * dr;
         const bwdEndCol = col - (bwd + 1) * dc;
-        const fwdBlocked = isEndBlocked(board, fwdEndRow, fwdEndCol, boardSize);
-        const bwdBlocked = isEndBlocked(board, bwdEndRow, bwdEndCol, boardSize);
+        const fwdBlocked = isEndBlocked(board, fwdEndRow, fwdEndCol, dr, dc, boardSize, symbol);
+        const bwdBlocked = isEndBlocked(board, bwdEndRow, bwdEndCol, -dr, -dc, boardSize, symbol);
         if (fwdBlocked && bwdBlocked) {
           continue;
         }
@@ -119,9 +119,22 @@ function countDirection(board, row, col, dr, dc, symbol, boardSize) {
   return count;
 }
 
-function isEndBlocked(board, row, col, boardSize) {
-  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) return true;
-  return Boolean(board[row * boardSize + col]);
+function isEndBlocked(board, row, col, dr, dc, boardSize, symbol) {
+  let r = row;
+  let c = col;
+  while (r >= 0 && r < boardSize && c >= 0 && c < boardSize) {
+    const cell = board[r * boardSize + c];
+    if (!cell) {
+      // empty cell — keep scanning past the gap
+      r += dr;
+      c += dc;
+    } else {
+      // blocked by opponent's piece; own piece means the sequence continues (not blocked)
+      return cell !== symbol;
+    }
+  }
+  // out of bounds → wall counts as blocked
+  return true;
 }
 
 function getRoomRef(roomId) {
@@ -357,6 +370,13 @@ async function restartGame() {
     await runTransaction(getRoomRef(state.roomId), (room) => {
       if (!room) {
         return room;
+      }
+
+      // Swap X and O players after each game
+      if (room.players?.X && room.players?.O) {
+        const temp = room.players.X;
+        room.players.X = room.players.O;
+        room.players.O = temp;
       }
 
       room.board = createEmptyBoard(room.boardSize || DEFAULT_BOARD_SIZE);

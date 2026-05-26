@@ -23,6 +23,8 @@
   --player-span-bg: #2d1810;
   --board-bg: rgba(42, 20, 10, 0.7);
   --error-color: #fca5a5;
+  --mark-x-color: #38bdf8;
+  --mark-o-color: #fb7185;
   background: var(--bg-root);
   color: var(--text-primary);
 }
@@ -45,6 +47,8 @@
   --player-span-bg: #f5e6d3;
   --board-bg: rgba(255, 248, 240, 0.7);
   --error-color: #b91c1c;
+  --mark-x-color: #1d4ed8;
+  --mark-o-color: #be185d;
   background: var(--bg-root);
   color: var(--text-primary);
 }
@@ -209,11 +213,11 @@ p {
 }
 
 .mark-x {
-  color: #60a5fa;
+  color: var(--mark-x-color);
 }
 
 .mark-o {
-  color: #f472b6;
+  color: var(--mark-o-color);
 }
 
 .cell.last-move {
