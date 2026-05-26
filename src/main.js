@@ -89,6 +89,16 @@ function getRoomRef(roomId) {
   return ref(database, `rooms/${roomId}`);
 }
 
+function getFriendlyError(error) {
+  const normalizedMessage = `${error?.code || ""} ${error?.message || error || ""}`.toLowerCase();
+
+  if (normalizedMessage.includes("permission_denied") || normalizedMessage.includes("permission denied")) {
+    return "Firebase Realtime Database đang chặn truy cập. Hãy mở quyền đọc/ghi cho đường dẫn rooms hoặc cập nhật rules phù hợp.";
+  }
+
+  return error?.message || "Đã có lỗi xảy ra. Vui lòng thử lại.";
+}
+
 function persistPlayerName(name) {
   state.playerName = name;
   localStorage.setItem(
@@ -125,46 +135,51 @@ async function joinRoom({ roomId, playerName }) {
 
   persistPlayerName(trimmedName);
 
-  const transaction = await runTransaction(getRoomRef(normalizedRoomId), (room) => {
-    if (!room) {
-      return createRoomData(trimmedName);
-    }
+  try {
+    const transaction = await runTransaction(getRoomRef(normalizedRoomId), (room) => {
+      if (!room) {
+        return createRoomData(trimmedName);
+      }
 
-    room.players ||= { X: null, O: null };
+      room.players ||= { X: null, O: null };
 
-    if (room.players.X?.id === state.playerId) {
-      room.players.X.name = trimmedName;
-    } else if (room.players.O?.id === state.playerId) {
-      room.players.O.name = trimmedName;
-    } else if (!room.players.X) {
-      room.players.X = { id: state.playerId, name: trimmedName };
-    } else if (!room.players.O) {
-      room.players.O = { id: state.playerId, name: trimmedName };
-    } else {
+      if (room.players.X?.id === state.playerId) {
+        room.players.X.name = trimmedName;
+      } else if (room.players.O?.id === state.playerId) {
+        room.players.O.name = trimmedName;
+      } else if (!room.players.X) {
+        room.players.X = { id: state.playerId, name: trimmedName };
+      } else if (!room.players.O) {
+        room.players.O = { id: state.playerId, name: trimmedName };
+      } else {
+        return room;
+      }
+
+      room.board ||= createEmptyBoard();
+      room.status = room.players.X && room.players.O ? "playing" : "waiting";
+      room.currentTurn ||= "X";
+      room.updatedAt = Date.now();
       return room;
+    });
+
+    const room = transaction.snapshot.val();
+    const playerSymbol = joinRoomSymbol(room);
+
+    if (!playerSymbol) {
+      state.error = "Phòng đã đủ 2 người chơi. Hãy dùng mã phòng khác.";
+      render();
+      return;
     }
 
-    room.board ||= createEmptyBoard();
-    room.status = room.players.X && room.players.O ? "playing" : "waiting";
-    room.currentTurn ||= "X";
-    room.updatedAt = Date.now();
-    return room;
-  });
-
-  const room = transaction.snapshot.val();
-  const playerSymbol = joinRoomSymbol(room);
-
-  if (!playerSymbol) {
-    state.error = "Phòng đã đủ 2 người chơi. Hãy dùng mã phòng khác.";
+    subscribeToRoom(normalizedRoomId);
+    state.roomId = normalizedRoomId;
+    state.playerSymbol = playerSymbol;
+    state.error = "";
     render();
-    return;
+  } catch (error) {
+    state.error = getFriendlyError(error);
+    render();
   }
-
-  subscribeToRoom(normalizedRoomId);
-  state.roomId = normalizedRoomId;
-  state.playerSymbol = playerSymbol;
-  state.error = "";
-  render();
 }
 
 function subscribeToRoom(roomId) {
@@ -173,19 +188,26 @@ function subscribeToRoom(roomId) {
   }
 
   const roomRef = getRoomRef(roomId);
-  state.unsubscribeRoom = onValue(roomRef, (snapshot) => {
-    state.roomData = snapshot.val();
+  state.unsubscribeRoom = onValue(
+    roomRef,
+    (snapshot) => {
+      state.roomData = snapshot.val();
 
-    if (!state.roomData) {
-      state.roomId = "";
-      state.playerSymbol = "";
-      state.error = "Phòng đã bị đóng.";
-    } else {
-      state.playerSymbol = joinRoomSymbol(state.roomData);
-    }
+      if (!state.roomData) {
+        state.roomId = "";
+        state.playerSymbol = "";
+        state.error = "Phòng đã bị đóng.";
+      } else {
+        state.playerSymbol = joinRoomSymbol(state.roomData);
+      }
 
-    render();
-  });
+      render();
+    },
+    (error) => {
+      state.error = getFriendlyError(error);
+      render();
+    },
+  );
 }
 
 async function leaveRoom() {
@@ -200,24 +222,30 @@ async function leaveRoom() {
   const symbol = state.playerSymbol;
   const roomId = state.roomId;
 
-  await runTransaction(getRoomRef(roomId), (room) => {
-    if (!room?.players) {
+  try {
+    await runTransaction(getRoomRef(roomId), (room) => {
+      if (!room?.players) {
+        return room;
+      }
+
+      room.players[symbol] = null;
+
+      if (!room.players.X && !room.players.O) {
+        return null;
+      }
+
+      room.status = room.players.X && room.players.O ? "playing" : "waiting";
+      room.currentTurn = "X";
+      room.winner = "";
+      room.board = createEmptyBoard();
+      room.updatedAt = Date.now();
       return room;
-    }
-
-    room.players[symbol] = null;
-
-    if (!room.players.X && !room.players.O) {
-      return null;
-    }
-
-    room.status = room.players.X && room.players.O ? "playing" : "waiting";
-    room.currentTurn = "X";
-    room.winner = "";
-    room.board = createEmptyBoard();
-    room.updatedAt = Date.now();
-    return room;
-  });
+    });
+  } catch (error) {
+    state.error = getFriendlyError(error);
+    render();
+    return;
+  }
 
   if (state.unsubscribeRoom) {
     state.unsubscribeRoom();
@@ -236,34 +264,39 @@ async function makeMove(index) {
     return;
   }
 
-  await runTransaction(getRoomRef(state.roomId), (room) => {
-    if (!room || room.status !== "playing" || room.currentTurn !== state.playerSymbol) {
+  try {
+    await runTransaction(getRoomRef(state.roomId), (room) => {
+      if (!room || room.status !== "playing" || room.currentTurn !== state.playerSymbol) {
+        return room;
+      }
+
+      room.board ||= createEmptyBoard();
+
+      if (room.board[index]) {
+        return room;
+      }
+
+      room.board[index] = state.playerSymbol;
+
+      if (checkWinner(room.board, index, state.playerSymbol)) {
+        room.status = "won";
+        room.winner = state.playerSymbol;
+        room.currentTurn = "";
+      } else if (room.board.every(Boolean)) {
+        room.status = "draw";
+        room.winner = "";
+        room.currentTurn = "";
+      } else {
+        room.currentTurn = state.playerSymbol === "X" ? "O" : "X";
+      }
+
+      room.updatedAt = Date.now();
       return room;
-    }
-
-    room.board ||= createEmptyBoard();
-
-    if (room.board[index]) {
-      return room;
-    }
-
-    room.board[index] = state.playerSymbol;
-
-    if (checkWinner(room.board, index, state.playerSymbol)) {
-      room.status = "won";
-      room.winner = state.playerSymbol;
-      room.currentTurn = "";
-    } else if (room.board.every(Boolean)) {
-      room.status = "draw";
-      room.winner = "";
-      room.currentTurn = "";
-    } else {
-      room.currentTurn = state.playerSymbol === "X" ? "O" : "X";
-    }
-
-    room.updatedAt = Date.now();
-    return room;
-  });
+    });
+  } catch (error) {
+    state.error = getFriendlyError(error);
+    render();
+  }
 }
 
 async function restartGame() {
@@ -271,18 +304,23 @@ async function restartGame() {
     return;
   }
 
-  await runTransaction(getRoomRef(state.roomId), (room) => {
-    if (!room) {
-      return room;
-    }
+  try {
+    await runTransaction(getRoomRef(state.roomId), (room) => {
+      if (!room) {
+        return room;
+      }
 
-    room.board = createEmptyBoard();
-    room.winner = "";
-    room.currentTurn = "X";
-    room.status = room.players?.X && room.players?.O ? "playing" : "waiting";
-    room.updatedAt = Date.now();
-    return room;
-  });
+      room.board = createEmptyBoard();
+      room.winner = "";
+      room.currentTurn = "X";
+      room.status = room.players?.X && room.players?.O ? "playing" : "waiting";
+      room.updatedAt = Date.now();
+      return room;
+    });
+  } catch (error) {
+    state.error = getFriendlyError(error);
+    render();
+  }
 }
 
 function gameStatusText() {
