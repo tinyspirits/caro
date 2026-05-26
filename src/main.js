@@ -4,10 +4,15 @@ import "./style.css";
 
 const WIN_LENGTH = 5;
 const STORAGE_KEY = "caro-online-player";
+const THEME_KEY = "caro-theme";
 const BOARD_SIZE_PRESETS = [15, 30];
 const DEFAULT_BOARD_SIZE = 15;
 
 const savedPlayer = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+
+// Theme initialisation – apply before first render to avoid flash
+const savedTheme = localStorage.getItem(THEME_KEY) || "dark";
+document.documentElement.setAttribute("data-theme", savedTheme);
 
 const state = {
   playerId: savedPlayer.id || crypto.randomUUID(),
@@ -17,6 +22,7 @@ const state = {
   roomData: null,
   unsubscribeRoom: null,
   error: "",
+  theme: savedTheme,
   // Settings used when creating a new room
   settings: {
     boardSize: DEFAULT_BOARD_SIZE,
@@ -138,6 +144,13 @@ function persistPlayerName(name) {
     STORAGE_KEY,
     JSON.stringify({ id: state.playerId, name: state.playerName }),
   );
+}
+
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, state.theme);
+  document.documentElement.setAttribute("data-theme", state.theme);
+  render();
 }
 
 function generateRoomId() {
@@ -447,7 +460,12 @@ function render() {
   app.innerHTML = `
     <main class="layout">
       <section class="panel">
-        <h1>Caro Online</h1>
+        <div class="app-header">
+          <h1>Caro Online</h1>
+          <button id="theme-toggle-btn" class="theme-toggle" title="Chuyển chế độ sáng/tối" aria-label="Chuyển chế độ sáng/tối">
+            ${state.theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
         <p class="subtitle">Tạo phòng, gửi mã cho bạn bè và chơi cờ caro trực tuyến theo thời gian thực.</p>
 
         <form id="room-form" class="card form">
@@ -509,6 +527,8 @@ function render() {
       </section>
     </main>
   `;
+
+  document.querySelector("#theme-toggle-btn").addEventListener("click", toggleTheme);
 
   document.querySelector("#room-form").addEventListener("submit", async (event) => {
     event.preventDefault();
