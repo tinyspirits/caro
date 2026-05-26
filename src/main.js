@@ -81,13 +81,17 @@ function checkWinner(board, index, symbol, boardSize, rules) {
     const count = 1 + fwd + bwd;
 
     if (count >= WIN_LENGTH) {
-      if (rules?.blockBothEnds) {
+      // Only apply the "blocked both ends" exception for exactly WIN_LENGTH pieces.
+      // For overlines (count > WIN_LENGTH) any interior 5-piece sub-sequence has the
+      // player's own pieces on both inner sides, so it can never be blocked at both
+      // ends by an opponent — overlines are always a win.
+      if (rules?.blockBothEnds && count === WIN_LENGTH) {
         const fwdEndRow = row + (fwd + 1) * dr;
         const fwdEndCol = col + (fwd + 1) * dc;
         const bwdEndRow = row - (bwd + 1) * dr;
         const bwdEndCol = col - (bwd + 1) * dc;
-        const fwdBlocked = isEndBlocked(board, fwdEndRow, fwdEndCol, dr, dc, boardSize, symbol);
-        const bwdBlocked = isEndBlocked(board, bwdEndRow, bwdEndCol, -dr, -dc, boardSize, symbol);
+        const fwdBlocked = isEndBlocked(board, fwdEndRow, fwdEndCol, boardSize, symbol);
+        const bwdBlocked = isEndBlocked(board, bwdEndRow, bwdEndCol, boardSize, symbol);
         if (fwdBlocked && bwdBlocked) {
           continue;
         }
@@ -119,22 +123,14 @@ function countDirection(board, row, col, dr, dc, symbol, boardSize) {
   return count;
 }
 
-function isEndBlocked(board, row, col, dr, dc, boardSize, symbol) {
-  let r = row;
-  let c = col;
-  while (r >= 0 && r < boardSize && c >= 0 && c < boardSize) {
-    const cell = board[r * boardSize + c];
-    if (!cell) {
-      // empty cell — keep scanning past the gap
-      r += dr;
-      c += dc;
-    } else {
-      // blocked by opponent's piece; own piece means the sequence continues (not blocked)
-      return cell !== symbol;
-    }
+function isEndBlocked(board, row, col, boardSize, symbol) {
+  // Out of bounds → board edge counts as blocked
+  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
+    return true;
   }
-  // out of bounds → wall counts as blocked
-  return true;
+  const cell = board[row * boardSize + col];
+  // Blocked only by an opponent's piece directly at this cell; empty = open
+  return cell !== "" && cell !== symbol;
 }
 
 function getRoomRef(roomId) {
