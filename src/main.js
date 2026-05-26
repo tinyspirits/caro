@@ -360,7 +360,7 @@ async function restartGame() {
       }
 
       // Swap X and O players after each game
-      if (room.players) {
+      if (room.players?.X && room.players?.O) {
         const temp = room.players.X;
         room.players.X = room.players.O;
         room.players.O = temp;
