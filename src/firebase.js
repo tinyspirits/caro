@@ -2,13 +2,13 @@ import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCjhcpZgXJr-xXdciT4bcUvZ9ne0Jsc5gc",
-  authDomain: "caro-cd3d1.firebaseapp.com",
-  databaseURL: "https://caro-cd3d1-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "caro-cd3d1",
-  storageBucket: "caro-cd3d1.firebasestorage.app",
-  messagingSenderId: "779475833282",
-  appId: "1:779475833282:web:f503223db8da8a40f4865b",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);
