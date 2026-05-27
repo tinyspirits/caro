@@ -509,7 +509,7 @@ function scheduleAIMove() {
     if (!state.aiGame || state.aiGame.status !== "playing") return;
     const { board, boardSize, aiSymbol, playerSymbol, difficulty, rules } = state.aiGame;
     const idx = getAIMove([...board], boardSize, aiSymbol, playerSymbol, difficulty);
-    if (idx === -1 || idx == null) return;
+    if (idx === -1 || idx === null) return;
     applyAIBoardMove(idx, aiSymbol);
   }, 50);
 }
@@ -738,12 +738,11 @@ function renderAIMode() {
   // Right panel – board
   let boardHtml;
   if (!g) {
-    const emptyBoard = createEmptyBoard(
-      state.aiSettings.useCustomSize
-        ? aiClampBoardSize(state.aiSettings.customBoardSize)
-        : state.aiSettings.boardSize,
-    );
-    boardHtml = renderBoardHtml(emptyBoard, emptyBoard.length ** 0.5 | 0, null, () => true);
+    const previewSize = state.aiSettings.useCustomSize
+      ? aiClampBoardSize(state.aiSettings.customBoardSize)
+      : state.aiSettings.boardSize;
+    const emptyBoard = createEmptyBoard(previewSize);
+    boardHtml = renderBoardHtml(emptyBoard, previewSize, null, () => true);
   } else {
     boardHtml = renderBoardHtml(
       g.board,

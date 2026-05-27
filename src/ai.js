@@ -69,8 +69,12 @@ function evalBoardFor(board, boardSize, symbol) {
 }
 
 // Net board evaluation from AI's perspective (positive = AI winning).
+// A small defensive bias (DEFENSIVE_BIAS) makes the AI slightly favour blocking
+// over attacking when scores are equal, which produces safer play.
+const DEFENSIVE_BIAS = 1.05;
+
 function evaluateBoard(board, boardSize, aiSym, playerSym) {
-  return evalBoardFor(board, boardSize, aiSym) - evalBoardFor(board, boardSize, playerSym) * 1.05;
+  return evalBoardFor(board, boardSize, aiSym) - evalBoardFor(board, boardSize, playerSym) * DEFENSIVE_BIAS;
 }
 
 // Quick per-cell score used for move ordering (cheap directional scan).
@@ -142,7 +146,14 @@ function getCandidates(board, boardSize, range) {
   if (result.length === 0) {
     // Empty board — play near center
     const center = Math.floor(boardSize / 2) * boardSize + Math.floor(boardSize / 2);
-    result.push(board[center] === '' ? center : board.findIndex((v) => v === ''));
+    if (board[center] === '') {
+      result.push(center);
+    } else {
+      // Unlikely edge case: center occupied on an otherwise empty board
+      for (let i = 0; i < board.length; i++) {
+        if (board[i] === '') { result.push(i); break; }
+      }
+    }
   }
   return result;
 }
