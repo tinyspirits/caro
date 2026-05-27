@@ -1,5 +1,6 @@
 import { onValue, ref, runTransaction } from "firebase/database";
 import { database } from "./firebase";
+import { getAIMove } from "./ai";
 import "./style.css";
 
 const WIN_LENGTH = 5;
@@ -7,6 +8,8 @@ const STORAGE_KEY = "caro-online-player";
 const THEME_KEY = "caro-theme";
 const BOARD_SIZE_PRESETS = [15, 30];
 const DEFAULT_BOARD_SIZE = 15;
+
+const AI_DIFFICULTY_LABELS = ["", "Dễ", "Trung bình thấp", "Trung bình", "Khó", "Rất khó"];
 
 const savedPlayer = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
 
@@ -17,6 +20,8 @@ document.documentElement.setAttribute("data-theme", savedTheme);
 const state = {
   playerId: savedPlayer.id || crypto.randomUUID(),
   playerName: savedPlayer.name || "",
+  // "online" | "ai"
+  mode: "online",
   roomId: "",
   playerSymbol: "",
   isViewer: false,
@@ -31,6 +36,16 @@ const state = {
     useCustomSize: false,
     blockBothEnds: false,
   },
+  // Settings and runtime state for AI mode
+  aiSettings: {
+    difficulty: 3,
+    boardSize: DEFAULT_BOARD_SIZE,
+    customBoardSize: 20,
+    useCustomSize: false,
+    blockBothEnds: false,
+  },
+  // Active AI game (null = no game in progress)
+  aiGame: null,
 };
 
 localStorage.setItem(
@@ -427,6 +442,118 @@ async function restartGame() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AI-mode logic
+// ---------------------------------------------------------------------------
+
+function aiClampBoardSize(size) {
+  return Math.max(5, Math.min(50, size || DEFAULT_BOARD_SIZE));
+}
+
+function startAIGame() {
+  const boardSize = state.aiSettings.useCustomSize
+    ? aiClampBoardSize(state.aiSettings.customBoardSize)
+    : state.aiSettings.boardSize;
+
+  state.aiGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    thinking: false,
+    playerSymbol: "X",
+    aiSymbol: "O",
+    difficulty: state.aiSettings.difficulty,
+    rules: { blockBothEnds: state.aiSettings.blockBothEnds },
+  };
+  render();
+}
+
+function leaveAIGame() {
+  state.aiGame = null;
+  render();
+}
+
+function restartAIGame() {
+  if (!state.aiGame) return;
+  const { boardSize, playerSymbol, aiSymbol, difficulty, rules } = state.aiGame;
+  // Swap sides each restart
+  const newPlayerSym = aiSymbol;
+  const newAISym = playerSymbol;
+  state.aiGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    thinking: false,
+    playerSymbol: newPlayerSym,
+    aiSymbol: newAISym,
+    difficulty,
+    rules,
+  };
+  render();
+  // If AI goes first (X) after the swap
+  if (state.aiGame.currentTurn === state.aiGame.aiSymbol) {
+    scheduleAIMove();
+  }
+}
+
+function scheduleAIMove() {
+  state.aiGame.thinking = true;
+  render();
+  setTimeout(() => {
+    if (!state.aiGame || state.aiGame.status !== "playing") return;
+    const { board, boardSize, aiSymbol, playerSymbol, difficulty, rules } = state.aiGame;
+    const idx = getAIMove([...board], boardSize, aiSymbol, playerSymbol, difficulty);
+    if (idx === -1 || idx === null) return;
+    applyAIBoardMove(idx, aiSymbol);
+  }, 50);
+}
+
+function applyAIBoardMove(index, symbol) {
+  if (!state.aiGame) return;
+  const g = state.aiGame;
+  if (g.board[index]) return;
+
+  g.board[index] = symbol;
+  g.lastMove = index;
+  g.thinking = false;
+
+  if (checkWinner(g.board, index, symbol, g.boardSize, g.rules)) {
+    g.status = "won";
+    g.winner = symbol;
+    g.currentTurn = "";
+  } else if (g.board.every(Boolean)) {
+    g.status = "draw";
+    g.currentTurn = "";
+  } else {
+    g.currentTurn = symbol === "X" ? "O" : "X";
+  }
+  render();
+}
+
+function makeAIMoveLocal(index) {
+  const g = state.aiGame;
+  if (!g || g.status !== "playing" || g.thinking) return;
+  if (g.currentTurn !== g.playerSymbol) return;
+  if (g.board[index]) return;
+
+  applyAIBoardMove(index, g.playerSymbol);
+
+  // Schedule AI response if game is still going
+  if (state.aiGame && state.aiGame.status === "playing") {
+    scheduleAIMove();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Online-mode game status helpers
+// ---------------------------------------------------------------------------
+
 function gameStatusText() {
   if (!state.roomData) {
     return "Tạo phòng mới hoặc nhập mã để vào phòng cùng bạn bè.";
@@ -466,7 +593,270 @@ function roomRules() {
   return state.roomData?.rules || {};
 }
 
+// ---------------------------------------------------------------------------
+// Render helpers – shared board widget
+// ---------------------------------------------------------------------------
+
+function renderBoardHtml(board, boardSize, lastMove, isCellDisabled) {
+  return `
+    <div class="board" role="grid" aria-label="Bàn cờ caro"
+      style="grid-template-columns: repeat(${boardSize}, minmax(0, 1fr))">
+      ${board
+        .map(
+          (cell, index) => `
+            <button
+              class="cell ${cell ? `mark-${cell.toLowerCase()}` : ""} ${index === lastMove ? "last-move" : ""}"
+              data-index="${index}"
+              ${isCellDisabled(index, cell) ? "disabled" : ""}
+              aria-label="Ô ${index + 1}"
+            >${cell || ""}</button>
+          `,
+        )
+        .join("")}
+    </div>`;
+}
+
+function renderWinOverlay(status, winner, winnerName) {
+  if (status !== "won" && status !== "draw") return "";
+  const isWon = status === "won";
+  const escapedWinner = winner ? escapeHtml(winner) : "";
+  const escapedName = winnerName ? escapeHtml(winnerName) : "";
+  return `
+    <div class="win-overlay">
+      <div class="win-card">
+        <div class="win-emoji">${isWon ? "🎉" : "🤝"}</div>
+        <h2>${isWon ? "Chúc mừng!" : "Hòa!"}</h2>
+        <p>${isWon ? `<strong>${escapedName}</strong> (${escapedWinner}) đã thắng!` : "Ván cờ kết thúc hòa."}</p>
+        <button id="overlay-restart-btn">Chơi lại</button>
+      </div>
+    </div>`;
+}
+
+function renderSizeOptions(settingsKey) {
+  const s = state[settingsKey];
+  return `
+    <div class="card settings">
+      <p class="settings-title"><strong>Kích thước bàn cờ</strong></p>
+      <label class="settings-label">
+        <div class="size-options">
+          ${BOARD_SIZE_PRESETS.map(
+            (size) => `
+            <label class="size-option">
+              <input type="radio" name="boardSizePreset" value="${size}"
+                ${s.useCustomSize ? "" : s.boardSize === size ? "checked" : ""} />
+              ${size}x${size}
+            </label>`,
+          ).join("")}
+          <label class="size-option">
+            <input type="radio" name="boardSizePreset" value="custom"
+              ${s.useCustomSize ? "checked" : ""} />
+            Tùy chỉnh
+          </label>
+        </div>
+      </label>
+      ${
+        s.useCustomSize
+          ? `<label class="settings-label">
+              Số ô (5–50)
+              <input id="custom-size-input" type="number" min="5" max="50" value="${s.customBoardSize}" />
+            </label>`
+          : ""
+      }
+      <label class="settings-label checkbox-label">
+        <input type="checkbox" id="block-both-ends" ${s.blockBothEnds ? "checked" : ""} />
+        Bị chặn 2 đầu không thắng
+      </label>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// AI mode render
+// ---------------------------------------------------------------------------
+
+function renderAIMode() {
+  const g = state.aiGame;
+
+  // Left panel
+  const modeTabs = `
+    <div class="mode-tabs">
+      <button class="mode-tab" id="tab-online">🌐 Online</button>
+      <button class="mode-tab mode-tab--active" id="tab-ai">🤖 vs AI</button>
+    </div>`;
+
+  let leftPanel;
+
+  if (!g) {
+    // Settings screen
+    const diffHtml = [1, 2, 3, 4, 5]
+      .map(
+        (d) => `
+        <button class="diff-btn ${state.aiSettings.difficulty === d ? "diff-btn--active" : ""}"
+          data-diff="${d}" title="${AI_DIFFICULTY_LABELS[d]}">
+          Cấp ${d}
+        </button>`,
+      )
+      .join("");
+
+    leftPanel = `
+      ${modeTabs}
+      <p class="subtitle">Chơi cờ caro một mình – thử sức với AI ở nhiều cấp độ.</p>
+
+      <div class="card settings">
+        <p class="settings-title"><strong>Cấp độ AI</strong></p>
+        <div class="diff-options">${diffHtml}</div>
+        <p class="diff-label">${escapeHtml(AI_DIFFICULTY_LABELS[state.aiSettings.difficulty])}</p>
+      </div>
+
+      ${renderSizeOptions("aiSettings")}
+
+      <button id="ai-start-btn" class="start-btn">Bắt đầu chơi</button>`;
+  } else {
+    // Active game info
+    const aiStatusText = g.thinking
+      ? "AI đang suy nghĩ…"
+      : g.status === "won"
+        ? `${g.winner === g.playerSymbol ? "Bạn thắng 🎉" : "AI thắng 🤖"}`
+        : g.status === "draw"
+          ? "Ván cờ hòa 🤝"
+          : `Đến lượt: ${g.currentTurn === g.playerSymbol ? "Bạn (" + g.playerSymbol + ")" : "AI (" + g.aiSymbol + ")"}`;
+
+    leftPanel = `
+      ${modeTabs}
+      <div class="card info">
+        <p><strong>Cấp độ:</strong> Cấp ${g.difficulty} – ${escapeHtml(AI_DIFFICULTY_LABELS[g.difficulty])}</p>
+        <p><strong>Bạn:</strong> ${g.playerSymbol} &nbsp;|&nbsp; <strong>AI:</strong> ${g.aiSymbol}</p>
+        <p><strong>Bàn cờ:</strong> ${g.boardSize}x${g.boardSize}</p>
+        <p><strong>Luật:</strong> ${g.rules.blockBothEnds ? "Bị chặn 2 đầu không thắng" : "Chỉ cần 5 là thắng"}</p>
+        <p><strong>Trạng thái:</strong> ${aiStatusText}</p>
+      </div>
+      <div class="actions">
+        <button id="ai-restart-btn" ${g ? "" : "disabled"}>Chơi lại</button>
+        <button id="ai-leave-btn" class="ghost">Kết thúc</button>
+      </div>`;
+  }
+
+  // Right panel – board
+  let boardHtml;
+  if (!g) {
+    const previewSize = state.aiSettings.useCustomSize
+      ? aiClampBoardSize(state.aiSettings.customBoardSize)
+      : state.aiSettings.boardSize;
+    const emptyBoard = createEmptyBoard(previewSize);
+    boardHtml = renderBoardHtml(emptyBoard, previewSize, null, () => true);
+  } else {
+    boardHtml = renderBoardHtml(
+      g.board,
+      g.boardSize,
+      g.lastMove,
+      (idx, cell) => Boolean(cell) || g.status !== "playing" || g.currentTurn !== g.playerSymbol || g.thinking,
+    );
+  }
+
+  const players = g
+    ? `
+      <div class="players">
+        <div class="player-card ${g.currentTurn === g.playerSymbol && g.status === "playing" ? "active" : ""}">
+          <span>${g.playerSymbol}</span>
+          <strong>Bạn</strong>
+        </div>
+        <div class="player-card ${(g.currentTurn === g.aiSymbol || g.thinking) && g.status === "playing" ? "active" : ""}">
+          <span>${g.aiSymbol}</span>
+          <strong>AI${g.thinking ? " 🤔" : ""}</strong>
+        </div>
+      </div>`
+    : "";
+
+  const winOverlay = g
+    ? renderWinOverlay(
+        g.status,
+        g.winner,
+        g.winner === g.playerSymbol ? "Bạn" : "AI",
+      )
+    : "";
+
+  const app = document.querySelector("#app");
+  app.innerHTML = `
+    <main class="layout">
+      <section class="panel">
+        <div class="app-header">
+          <h1>Caro</h1>
+          <button id="theme-toggle-btn" class="theme-toggle" title="Chuyển chế độ sáng/tối" aria-label="Chuyển chế độ sáng/tối">
+            ${state.theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
+        ${leftPanel}
+      </section>
+
+      <section class="board-panel">
+        ${players}
+        ${boardHtml}
+        ${winOverlay}
+      </section>
+    </main>
+  `;
+
+  document.querySelector("#theme-toggle-btn").addEventListener("click", toggleTheme);
+  document.querySelector("#tab-online").addEventListener("click", () => {
+    state.aiGame = null;
+    state.mode = "online";
+    render();
+  });
+
+  // Difficulty buttons (settings screen only)
+  document.querySelectorAll(".diff-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.aiSettings.difficulty = Number(btn.dataset.diff);
+      render();
+    });
+  });
+
+  // Board size options (settings screen only)
+  document.querySelectorAll("input[name='boardSizePreset']").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value === "custom") {
+        state.aiSettings.useCustomSize = true;
+      } else {
+        state.aiSettings.useCustomSize = false;
+        state.aiSettings.boardSize = Number(radio.value);
+      }
+      render();
+    });
+  });
+
+  document.querySelector("#custom-size-input")?.addEventListener("change", (event) => {
+    const val = parseInt(event.target.value, 10);
+    if (!isNaN(val)) {
+      state.aiSettings.customBoardSize = aiClampBoardSize(val);
+      render();
+    }
+  });
+
+  document.querySelector("#block-both-ends")?.addEventListener("change", (event) => {
+    state.aiSettings.blockBothEnds = event.target.checked;
+  });
+
+  document.querySelector("#ai-start-btn")?.addEventListener("click", startAIGame);
+  document.querySelector("#ai-restart-btn")?.addEventListener("click", restartAIGame);
+  document.querySelector("#overlay-restart-btn")?.addEventListener("click", restartAIGame);
+  document.querySelector("#ai-leave-btn")?.addEventListener("click", leaveAIGame);
+
+  document.querySelectorAll(".cell").forEach((cell) => {
+    cell.addEventListener("click", () => {
+      makeAIMoveLocal(Number(cell.dataset.index));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Online mode render
+// ---------------------------------------------------------------------------
+
 function render() {
+  if (state.mode === "ai") {
+    renderAIMode();
+    return;
+  }
+
   const boardSize = roomBoardSize();
   const board = state.roomData?.board || createEmptyBoard(boardSize);
   const isInRoom = Boolean(state.roomId);
@@ -513,16 +903,23 @@ function render() {
       `
     : "";
 
+  const modeTabs = `
+    <div class="mode-tabs">
+      <button class="mode-tab mode-tab--active" id="tab-online">🌐 Online</button>
+      <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
+    </div>`;
+
   const app = document.querySelector("#app");
   app.innerHTML = `
     <main class="layout">
       <section class="panel">
         <div class="app-header">
-          <h1>Caro Online</h1>
+          <h1>Caro</h1>
           <button id="theme-toggle-btn" class="theme-toggle" title="Chuyển chế độ sáng/tối" aria-label="Chuyển chế độ sáng/tối">
             ${state.theme === "dark" ? "☀️" : "🌙"}
           </button>
         </div>
+        ${modeTabs}
         <p class="subtitle">Tạo phòng, gửi mã cho bạn bè và chơi cờ caro trực tuyến theo thời gian thực.</p>
 
         <form id="room-form" class="card form">
@@ -566,46 +963,29 @@ function render() {
           </div>
         </div>
 
-        <div class="board" role="grid" aria-label="Bàn cờ caro"
-          style="grid-template-columns: repeat(${boardSize}, minmax(0, 1fr))">
-          ${board
-            .map(
-              (cell, index) => `
-                <button
-                  class="cell ${cell ? `mark-${cell.toLowerCase()}` : ""} ${index === state.roomData?.lastMove ? "last-move" : ""}"
-                  data-index="${index}"
-                  ${boardDisabled(index) ? "disabled" : ""}
-                  aria-label="Ô ${index + 1}"
-                >${cell || ""}</button>
-              `,
-            )
-            .join("")}
-        </div>
+        ${renderBoardHtml(board, boardSize, state.roomData?.lastMove, boardDisabled)}
 
         ${(() => {
           const status = state.roomData?.status;
-          if (status !== "won" && status !== "draw") return "";
           const winnerSymbol = state.roomData?.winner;
-          const escapedWinnerSymbol = winnerSymbol ? escapeHtml(winnerSymbol) : "";
           const winnerName = winnerSymbol
-            ? escapeHtml(state.roomData?.players?.[winnerSymbol]?.name || winnerSymbol)
+            ? state.roomData?.players?.[winnerSymbol]?.name || winnerSymbol
             : "";
-          const isWon = status === "won";
-          return `
-          <div class="win-overlay">
-            <div class="win-card">
-              <div class="win-emoji">${isWon ? "🎉" : "🤝"}</div>
-              <h2>${isWon ? "Chúc mừng!" : "Hòa!"}</h2>
-              <p>${isWon ? `<strong>${winnerName}</strong> (${escapedWinnerSymbol}) đã thắng!` : "Ván cờ kết thúc hòa."}</p>
-              <button id="overlay-restart-btn">Chơi lại</button>
-            </div>
-          </div>`;
+          return renderWinOverlay(status, winnerSymbol, winnerName);
         })()}
       </section>
     </main>
   `;
 
   document.querySelector("#theme-toggle-btn").addEventListener("click", toggleTheme);
+  document.querySelector("#tab-online").addEventListener("click", () => {
+    state.mode = "online";
+    render();
+  });
+  document.querySelector("#tab-ai").addEventListener("click", () => {
+    state.mode = "ai";
+    render();
+  });
 
   document.querySelector("#room-form").addEventListener("submit", async (event) => {
     event.preventDefault();
