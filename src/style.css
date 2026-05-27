@@ -361,3 +361,71 @@ p {
   font-size: 1rem;
   cursor: pointer;
 }
+
+/* Mode tabs */
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-tab {
+  flex: 1;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--ghost-bg);
+  color: inherit;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.mode-tab--active {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* AI difficulty selector */
+.diff-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.diff-btn {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--ghost-bg);
+  color: inherit;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.diff-btn--active {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  border-color: transparent;
+}
+
+.diff-label {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-subtitle);
+}
+
+/* Start button (AI mode) */
+.start-btn {
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  padding: 12px 16px;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+}
