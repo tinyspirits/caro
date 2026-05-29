@@ -176,12 +176,12 @@ function countDirection(board, row, col, dr, dc, symbol, boardSize) {
 }
 
 function isEndBlocked(board, row, col, boardSize, symbol) {
-  // Out of bounds → board edge is open (not blocked)
+  // Out of bounds → wall counts as blocked (Vietnamese Caro rule)
   if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
-    return false;
+    return true;
   }
   const cell = board[row * boardSize + col];
-  // Blocked only by an opponent's piece directly at this cell; empty = open
+  // Blocked by an opponent's piece; empty = open
   return cell !== "" && cell !== symbol;
 }
 
@@ -552,7 +552,7 @@ function scheduleAIMove() {
   setTimeout(() => {
     if (!state.aiGame || state.aiGame.status !== "playing") return;
     const { board, boardSize, aiSymbol, playerSymbol, difficulty, rules, biasMap } = state.aiGame;
-    const idx = getAIMove([...board], boardSize, aiSymbol, playerSymbol, difficulty, biasMap);
+    const idx = getAIMove([...board], boardSize, aiSymbol, playerSymbol, difficulty, biasMap, rules);
     if (idx === -1 || idx === null) return;
     applyAIBoardMove(idx, aiSymbol);
   }, 50);
