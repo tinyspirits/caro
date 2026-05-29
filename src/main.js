@@ -571,7 +571,9 @@ function makeAIMoveLocal(index) {
 // ---------------------------------------------------------------------------
 
 function trackVisit() {
-  runTransaction(ref(database, "stats/visitCount"), (count) => (count || 0) + 1).catch(() => {});
+  runTransaction(ref(database, "stats/visitCount"), (count) => (count || 0) + 1).catch((err) => {
+    console.warn("[caro] trackVisit failed:", err?.message || err);
+  });
 }
 
 function initPresence() {
@@ -579,7 +581,9 @@ function initPresence() {
   const presRef = ref(database, `presence/${state.playerId}`);
   onValue(connRef, (snap) => {
     if (snap.val() === true) {
-      set(presRef, { since: Date.now() }).catch(() => {});
+      set(presRef, { since: Date.now() }).catch((err) => {
+        console.warn("[caro] initPresence set failed:", err?.message || err);
+      });
       onDisconnect(presRef).remove();
     }
   });
