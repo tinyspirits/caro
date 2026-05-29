@@ -1,4 +1,4 @@
-import { onValue, ref, runTransaction } from "firebase/database";
+import { onValue, onDisconnect, ref, runTransaction, set } from "firebase/database";
 import { database } from "./firebase";
 import { getAIMove } from "./ai";
 import "./style.css";
@@ -46,6 +46,22 @@ const state = {
   },
   // Active AI game (null = no game in progress)
   aiGame: null,
+  // Settings for 2-player local mode
+  localSettings: {
+    boardSize: DEFAULT_BOARD_SIZE,
+    customBoardSize: 20,
+    useCustomSize: false,
+    blockBothEnds: false,
+    player1Name: "Người chơi 1",
+    player2Name: "Người chơi 2",
+  },
+  // Active local game (null = no game in progress)
+  localGame: null,
+  // Aggregated Firebase stats
+  stats: {
+    visitCount: 0,
+    onlineCount: 0,
+  },
 };
 
 localStorage.setItem(
@@ -551,6 +567,103 @@ function makeAIMoveLocal(index) {
 }
 
 // ---------------------------------------------------------------------------
+// Visit / presence tracking
+// ---------------------------------------------------------------------------
+
+function trackVisit() {
+  runTransaction(ref(database, "stats/visitCount"), (count) => (count || 0) + 1).catch(() => {});
+}
+
+function initPresence() {
+  const connRef = ref(database, ".info/connected");
+  const presRef = ref(database, `presence/${state.playerId}`);
+  onValue(connRef, (snap) => {
+    if (snap.val() === true) {
+      set(presRef, { since: Date.now() }).catch(() => {});
+      onDisconnect(presRef).remove();
+    }
+  });
+}
+
+function subscribeStats() {
+  onValue(ref(database, "stats/visitCount"), (snap) => {
+    state.stats.visitCount = snap.val() || 0;
+    render();
+  });
+  onValue(ref(database, "presence"), (snap) => {
+    state.stats.onlineCount = snap.exists() ? Object.keys(snap.val()).length : 0;
+    render();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 2-player local (offline) mode logic
+// ---------------------------------------------------------------------------
+
+function startLocalGame() {
+  const s = state.localSettings;
+  const boardSize = s.useCustomSize
+    ? clampBoardSize(s.customBoardSize)
+    : s.boardSize;
+  state.localGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    player1Name: s.player1Name.trim() || "Người chơi 1",
+    player2Name: s.player2Name.trim() || "Người chơi 2",
+    rules: { blockBothEnds: s.blockBothEnds },
+  };
+  render();
+}
+
+function leaveLocalGame() {
+  state.localGame = null;
+  render();
+}
+
+function restartLocalGame() {
+  if (!state.localGame) return;
+  const { boardSize, player1Name, player2Name, rules } = state.localGame;
+  state.localGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    player1Name,
+    player2Name,
+    rules,
+  };
+  render();
+}
+
+function makeLocalMove(index) {
+  const g = state.localGame;
+  if (!g || g.status !== "playing") return;
+  if (g.board[index]) return;
+
+  const symbol = g.currentTurn;
+  g.board[index] = symbol;
+  g.lastMove = index;
+
+  if (checkWinner(g.board, index, symbol, g.boardSize, g.rules)) {
+    g.status = "won";
+    g.winner = symbol;
+    g.currentTurn = "";
+  } else if (g.board.every(Boolean)) {
+    g.status = "draw";
+    g.currentTurn = "";
+  } else {
+    g.currentTurn = symbol === "X" ? "O" : "X";
+  }
+  render();
+}
+
+// ---------------------------------------------------------------------------
 // Online-mode game status helpers
 // ---------------------------------------------------------------------------
 
@@ -632,6 +745,14 @@ function renderWinOverlay(status, winner, winnerName) {
     </div>`;
 }
 
+function renderStatsBar() {
+  return `
+    <div class="stats-bar">
+      <span>🌐 ${state.stats.onlineCount} đang trực tuyến</span>
+      <span>👁️ ${state.stats.visitCount.toLocaleString("vi-VN")} lượt truy cập</span>
+    </div>`;
+}
+
 function renderSizeOptions(settingsKey) {
   const s = state[settingsKey];
   return `
@@ -681,6 +802,7 @@ function renderAIMode() {
     <div class="mode-tabs">
       <button class="mode-tab" id="tab-online">🌐 Online</button>
       <button class="mode-tab mode-tab--active" id="tab-ai">🤖 vs AI</button>
+      <button class="mode-tab" id="tab-local">👥 2 Người</button>
     </div>`;
 
   let leftPanel;
@@ -785,6 +907,7 @@ function renderAIMode() {
           </button>
         </div>
         ${leftPanel}
+        ${renderStatsBar()}
       </section>
 
       <section class="board-panel">
@@ -799,6 +922,11 @@ function renderAIMode() {
   document.querySelector("#tab-online").addEventListener("click", () => {
     state.aiGame = null;
     state.mode = "online";
+    render();
+  });
+  document.querySelector("#tab-local").addEventListener("click", () => {
+    state.aiGame = null;
+    state.mode = "local";
     render();
   });
 
@@ -848,12 +976,198 @@ function renderAIMode() {
 }
 
 // ---------------------------------------------------------------------------
+// Local (2-player offline) mode render
+// ---------------------------------------------------------------------------
+
+function renderLocalMode() {
+  const g = state.localGame;
+  const s = state.localSettings;
+
+  const modeTabs = `
+    <div class="mode-tabs">
+      <button class="mode-tab" id="tab-online">🌐 Online</button>
+      <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
+      <button class="mode-tab mode-tab--active" id="tab-local">👥 2 Người</button>
+    </div>`;
+
+  let leftPanel;
+
+  if (!g) {
+    // Settings screen
+    leftPanel = `
+      ${modeTabs}
+      <p class="subtitle">Chơi cờ caro 2 người trên cùng một thiết bị.</p>
+
+      <div class="card settings">
+        <p class="settings-title"><strong>Tên người chơi</strong></p>
+        <label class="settings-label">
+          Người chơi X
+          <input id="local-p1-name" type="text" maxlength="30"
+            value="${escapeHtml(s.player1Name)}" placeholder="Người chơi 1" />
+        </label>
+        <label class="settings-label">
+          Người chơi O
+          <input id="local-p2-name" type="text" maxlength="30"
+            value="${escapeHtml(s.player2Name)}" placeholder="Người chơi 2" />
+        </label>
+      </div>
+
+      ${renderSizeOptions("localSettings")}
+
+      <button id="local-start-btn" class="start-btn">Bắt đầu chơi</button>`;
+  } else {
+    const statusText = g.status === "won"
+      ? `${escapeHtml(g.winner === "X" ? g.player1Name : g.player2Name)} thắng!`
+      : g.status === "draw"
+        ? "Ván cờ hòa 🤝"
+        : `Đến lượt: ${g.currentTurn === "X"
+            ? `${escapeHtml(g.player1Name)} (X)`
+            : `${escapeHtml(g.player2Name)} (O)`}`;
+
+    leftPanel = `
+      ${modeTabs}
+      <div class="card info">
+        <p><strong>Người chơi X:</strong> ${escapeHtml(g.player1Name)}</p>
+        <p><strong>Người chơi O:</strong> ${escapeHtml(g.player2Name)}</p>
+        <p><strong>Bàn cờ:</strong> ${g.boardSize}x${g.boardSize}</p>
+        <p><strong>Luật:</strong> ${g.rules.blockBothEnds ? "Bị chặn 2 đầu không thắng" : "Chỉ cần 5 là thắng"}</p>
+        <p><strong>Trạng thái:</strong> ${statusText}</p>
+      </div>
+      <div class="actions">
+        <button id="local-restart-btn">Chơi lại</button>
+        <button id="local-leave-btn" class="ghost">Kết thúc</button>
+      </div>`;
+  }
+
+  // Right panel – board
+  let boardHtml;
+  if (!g) {
+    const previewSize = s.useCustomSize
+      ? clampBoardSize(s.customBoardSize)
+      : s.boardSize;
+    const emptyBoard = createEmptyBoard(previewSize);
+    boardHtml = renderBoardHtml(emptyBoard, previewSize, null, () => true);
+  } else {
+    boardHtml = renderBoardHtml(
+      g.board,
+      g.boardSize,
+      g.lastMove,
+      (idx, cell) => Boolean(cell) || g.status !== "playing",
+    );
+  }
+
+  const players = g
+    ? `
+      <div class="players">
+        <div class="player-card ${g.currentTurn === "X" && g.status === "playing" ? "active" : ""}">
+          <span>X</span>
+          <strong>${escapeHtml(g.player1Name)}</strong>
+        </div>
+        <div class="player-card ${g.currentTurn === "O" && g.status === "playing" ? "active" : ""}">
+          <span>O</span>
+          <strong>${escapeHtml(g.player2Name)}</strong>
+        </div>
+      </div>`
+    : "";
+
+  const winOverlay = g
+    ? renderWinOverlay(
+        g.status,
+        g.winner,
+        g.winner === "X" ? g.player1Name : g.winner === "O" ? g.player2Name : "",
+      )
+    : "";
+
+  const app = document.querySelector("#app");
+  app.innerHTML = `
+    <main class="layout">
+      <section class="panel">
+        <div class="app-header">
+          <h1>Caro</h1>
+          <button id="theme-toggle-btn" class="theme-toggle" title="Chuyển chế độ sáng/tối" aria-label="Chuyển chế độ sáng/tối">
+            ${state.theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
+        ${leftPanel}
+        ${renderStatsBar()}
+      </section>
+
+      <section class="board-panel">
+        ${players}
+        ${boardHtml}
+        ${winOverlay}
+      </section>
+    </main>
+  `;
+
+  document.querySelector("#theme-toggle-btn").addEventListener("click", toggleTheme);
+  document.querySelector("#tab-online").addEventListener("click", () => {
+    state.localGame = null;
+    state.mode = "online";
+    render();
+  });
+  document.querySelector("#tab-ai").addEventListener("click", () => {
+    state.localGame = null;
+    state.mode = "ai";
+    render();
+  });
+
+  // Settings screen listeners
+  document.querySelector("#local-p1-name")?.addEventListener("input", (e) => {
+    state.localSettings.player1Name = e.target.value;
+  });
+  document.querySelector("#local-p2-name")?.addEventListener("input", (e) => {
+    state.localSettings.player2Name = e.target.value;
+  });
+
+  document.querySelectorAll("input[name='boardSizePreset']").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value === "custom") {
+        state.localSettings.useCustomSize = true;
+      } else {
+        state.localSettings.useCustomSize = false;
+        state.localSettings.boardSize = Number(radio.value);
+      }
+      render();
+    });
+  });
+
+  document.querySelector("#custom-size-input")?.addEventListener("change", (event) => {
+    const val = parseInt(event.target.value, 10);
+    if (!isNaN(val)) {
+      state.localSettings.customBoardSize = clampBoardSize(val);
+      render();
+    }
+  });
+
+  document.querySelector("#block-both-ends")?.addEventListener("change", (event) => {
+    state.localSettings.blockBothEnds = event.target.checked;
+  });
+
+  document.querySelector("#local-start-btn")?.addEventListener("click", startLocalGame);
+  document.querySelector("#local-restart-btn")?.addEventListener("click", restartLocalGame);
+  document.querySelector("#overlay-restart-btn")?.addEventListener("click", restartLocalGame);
+  document.querySelector("#local-leave-btn")?.addEventListener("click", leaveLocalGame);
+
+  document.querySelectorAll(".cell").forEach((cell) => {
+    cell.addEventListener("click", () => {
+      makeLocalMove(Number(cell.dataset.index));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Online mode render
 // ---------------------------------------------------------------------------
 
 function render() {
   if (state.mode === "ai") {
     renderAIMode();
+    return;
+  }
+
+  if (state.mode === "local") {
+    renderLocalMode();
     return;
   }
 
@@ -907,6 +1221,7 @@ function render() {
     <div class="mode-tabs">
       <button class="mode-tab mode-tab--active" id="tab-online">🌐 Online</button>
       <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
+      <button class="mode-tab" id="tab-local">👥 2 Người</button>
     </div>`;
 
   const app = document.querySelector("#app");
@@ -949,6 +1264,7 @@ function render() {
           <button id="restart-btn" ${state.roomId && !state.isViewer ? "" : "disabled"}>Chơi lại</button>
           <button id="leave-btn" class="ghost" ${state.roomId ? "" : "disabled"}>Rời phòng</button>
         </div>
+        ${renderStatsBar()}
       </section>
 
       <section class="board-panel">
@@ -984,6 +1300,10 @@ function render() {
   });
   document.querySelector("#tab-ai").addEventListener("click", () => {
     state.mode = "ai";
+    render();
+  });
+  document.querySelector("#tab-local").addEventListener("click", () => {
+    state.mode = "local";
     render();
   });
 
@@ -1039,3 +1359,6 @@ function escapeHtml(value) {
 }
 
 render();
+trackVisit();
+initPresence();
+subscribeStats();
