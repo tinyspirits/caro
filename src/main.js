@@ -1,11 +1,13 @@
 import { onValue, onDisconnect, ref, runTransaction, set } from "firebase/database";
 import { database } from "./firebase";
 import { getAIMove } from "./ai";
+import { getGeminiMove } from "./gemini";
 import "./style.css";
 
 const WIN_LENGTH = 5;
 const STORAGE_KEY = "caro-online-player";
 const THEME_KEY = "caro-theme";
+const GEMINI_KEY = "caro-gemini-key";
 const BOARD_SIZE_PRESETS = [15, 30];
 const DEFAULT_BOARD_SIZE = 15;
 
@@ -57,6 +59,16 @@ const state = {
   },
   // Active local game (null = no game in progress)
   localGame: null,
+  // Settings and runtime state for Gemini AI mode
+  geminiSettings: {
+    apiKey: localStorage.getItem(GEMINI_KEY) || "",
+    boardSize: DEFAULT_BOARD_SIZE,
+    customBoardSize: 20,
+    useCustomSize: false,
+    blockBothEnds: false,
+  },
+  // Active Gemini game (null = no game in progress)
+  geminiGame: null,
   // Aggregated Firebase stats
   stats: {
     visitCount: 0,
@@ -668,6 +680,140 @@ function makeLocalMove(index) {
 }
 
 // ---------------------------------------------------------------------------
+// Gemini AI mode logic
+// ---------------------------------------------------------------------------
+
+function geminiClampBoardSize(size) {
+  return Math.max(5, Math.min(50, size || DEFAULT_BOARD_SIZE));
+}
+
+function startGeminiGame() {
+  const s = state.geminiSettings;
+  if (!s.apiKey.trim()) {
+    state.geminiGame = null;
+    render();
+    return;
+  }
+  const boardSize = s.useCustomSize
+    ? geminiClampBoardSize(s.customBoardSize)
+    : s.boardSize;
+
+  state.geminiGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    thinking: false,
+    error: "",
+    playerSymbol: "X",
+    aiSymbol: "O",
+    rules: { blockBothEnds: s.blockBothEnds },
+  };
+  render();
+}
+
+function leaveGeminiGame() {
+  state.geminiGame = null;
+  render();
+}
+
+function restartGeminiGame() {
+  if (!state.geminiGame) return;
+  const { boardSize, playerSymbol, aiSymbol, rules } = state.geminiGame;
+  const newPlayerSym = aiSymbol;
+  const newAISym = playerSymbol;
+  state.geminiGame = {
+    board: Array(boardSize * boardSize).fill(""),
+    boardSize,
+    currentTurn: "X",
+    status: "playing",
+    winner: "",
+    lastMove: null,
+    thinking: false,
+    error: "",
+    playerSymbol: newPlayerSym,
+    aiSymbol: newAISym,
+    rules,
+  };
+  render();
+  if (state.geminiGame.currentTurn === state.geminiGame.aiSymbol) {
+    scheduleGeminiMove();
+  }
+}
+
+function applyGeminiBoardMove(index, symbol) {
+  if (!state.geminiGame) return;
+  const g = state.geminiGame;
+  if (g.board[index]) return;
+
+  g.board[index] = symbol;
+  g.lastMove = index;
+  g.thinking = false;
+  g.error = "";
+
+  if (checkWinner(g.board, index, symbol, g.boardSize, g.rules)) {
+    g.status = "won";
+    g.winner = symbol;
+    g.currentTurn = "";
+  } else if (g.board.every(Boolean)) {
+    g.status = "draw";
+    g.currentTurn = "";
+  } else {
+    g.currentTurn = symbol === "X" ? "O" : "X";
+  }
+  render();
+}
+
+function scheduleGeminiMove() {
+  if (!state.geminiGame || state.geminiGame.status !== "playing") return;
+  state.geminiGame.thinking = true;
+  state.geminiGame.error = "";
+  render();
+
+  const g = state.geminiGame;
+  const { board, boardSize, aiSymbol, playerSymbol, rules } = g;
+
+  getGeminiMove([...board], boardSize, aiSymbol, playerSymbol, state.geminiSettings.apiKey, rules)
+    .then((idx) => {
+      if (!state.geminiGame || state.geminiGame.status !== "playing") return;
+      applyGeminiBoardMove(idx, state.geminiGame.aiSymbol);
+    })
+    .catch((err) => {
+      if (!state.geminiGame) return;
+      // Fall back to local level-3 AI so the game can continue
+      state.geminiGame.error = `Gemini API thất bại – đã dùng AI cục bộ thay thế. (${err.message})`;
+      state.geminiGame.thinking = false;
+      const fallbackIdx = getAIMove(
+        [...state.geminiGame.board],
+        state.geminiGame.boardSize,
+        state.geminiGame.aiSymbol,
+        state.geminiGame.playerSymbol,
+        3,
+      );
+      if (fallbackIdx !== -1 && fallbackIdx !== null) {
+        applyGeminiBoardMove(fallbackIdx, state.geminiGame.aiSymbol);
+      } else {
+        render();
+      }
+    });
+}
+
+function makeGeminiMoveLocal(index) {
+  const g = state.geminiGame;
+  if (!g || g.status !== "playing" || g.thinking) return;
+  if (g.currentTurn !== g.playerSymbol) return;
+  if (g.board[index]) return;
+
+  applyGeminiBoardMove(index, g.playerSymbol);
+
+  if (state.geminiGame && state.geminiGame.status === "playing") {
+    scheduleGeminiMove();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Online-mode game status helpers
 // ---------------------------------------------------------------------------
 
@@ -807,6 +953,7 @@ function renderAIMode() {
       <button class="mode-tab" id="tab-online">🌐 Online</button>
       <button class="mode-tab mode-tab--active" id="tab-ai">🤖 vs AI</button>
       <button class="mode-tab" id="tab-local">👥 2 Người</button>
+      <button class="mode-tab" id="tab-gemini">🧠 Gemini</button>
     </div>`;
 
   let leftPanel;
@@ -933,6 +1080,11 @@ function renderAIMode() {
     state.mode = "local";
     render();
   });
+  document.querySelector("#tab-gemini").addEventListener("click", () => {
+    state.aiGame = null;
+    state.mode = "gemini";
+    render();
+  });
 
   // Difficulty buttons (settings screen only)
   document.querySelectorAll(".diff-btn").forEach((btn) => {
@@ -992,6 +1144,7 @@ function renderLocalMode() {
       <button class="mode-tab" id="tab-online">🌐 Online</button>
       <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
       <button class="mode-tab mode-tab--active" id="tab-local">👥 2 Người</button>
+      <button class="mode-tab" id="tab-gemini">🧠 Gemini</button>
     </div>`;
 
   let leftPanel;
@@ -1115,6 +1268,11 @@ function renderLocalMode() {
     state.mode = "ai";
     render();
   });
+  document.querySelector("#tab-gemini").addEventListener("click", () => {
+    state.localGame = null;
+    state.mode = "gemini";
+    render();
+  });
 
   // Settings screen listeners
   document.querySelector("#local-p1-name")?.addEventListener("input", (e) => {
@@ -1161,6 +1319,197 @@ function renderLocalMode() {
 }
 
 // ---------------------------------------------------------------------------
+// Gemini AI mode render
+// ---------------------------------------------------------------------------
+
+function renderGeminiMode() {
+  const g = state.geminiGame;
+  const s = state.geminiSettings;
+
+  const modeTabs = `
+    <div class="mode-tabs">
+      <button class="mode-tab" id="tab-online">🌐 Online</button>
+      <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
+      <button class="mode-tab" id="tab-local">👥 2 Người</button>
+      <button class="mode-tab mode-tab--active" id="tab-gemini">🧠 Gemini</button>
+    </div>`;
+
+  let leftPanel;
+
+  if (!g) {
+    // Settings screen
+    const apiKeyMissing = !s.apiKey.trim();
+    leftPanel = `
+      ${modeTabs}
+      <p class="subtitle">Chơi cờ caro đối đầu với trí tuệ nhân tạo Gemini của Google.</p>
+
+      <div class="card settings">
+        <p class="settings-title"><strong>Google Gemini API Key</strong></p>
+        <label class="settings-label">
+          API Key
+          <input id="gemini-api-key" type="password" maxlength="200"
+            placeholder="AIza…"
+            value="${escapeHtml(s.apiKey)}" />
+        </label>
+        <p class="settings-hint">
+          Lấy API key miễn phí tại
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+          Key được lưu trên trình duyệt của bạn.
+        </p>
+        ${apiKeyMissing ? `<p class="error">Vui lòng nhập API key để bắt đầu.</p>` : ""}
+      </div>
+
+      ${renderSizeOptions("geminiSettings")}
+
+      <button id="gemini-start-btn" class="start-btn" ${apiKeyMissing ? "disabled" : ""}>Bắt đầu chơi</button>`;
+  } else {
+    const geminiStatusText = g.thinking
+      ? "Gemini đang suy nghĩ…"
+      : g.status === "won"
+        ? `${g.winner === g.playerSymbol ? "Bạn thắng 🎉" : "Gemini thắng 🧠"}`
+        : g.status === "draw"
+          ? "Ván cờ hòa 🤝"
+          : `Đến lượt: ${g.currentTurn === g.playerSymbol ? "Bạn (" + g.playerSymbol + ")" : "Gemini (" + g.aiSymbol + ")"}`;
+
+    leftPanel = `
+      ${modeTabs}
+      <div class="card info">
+        <p><strong>Bạn:</strong> ${g.playerSymbol} &nbsp;|&nbsp; <strong>Gemini:</strong> ${g.aiSymbol}</p>
+        <p><strong>Bàn cờ:</strong> ${g.boardSize}x${g.boardSize}</p>
+        <p><strong>Luật:</strong> ${g.rules.blockBothEnds ? "Bị chặn 2 đầu không thắng" : "Chỉ cần 5 là thắng"}</p>
+        <p><strong>Trạng thái:</strong> ${geminiStatusText}</p>
+        ${g.error ? `<p class="error">${escapeHtml(g.error)}</p>` : ""}
+      </div>
+      <div class="actions">
+        <button id="gemini-restart-btn">Chơi lại</button>
+        <button id="gemini-leave-btn" class="ghost">Kết thúc</button>
+      </div>`;
+  }
+
+  // Right panel – board
+  let boardHtml;
+  if (!g) {
+    const previewSize = s.useCustomSize
+      ? geminiClampBoardSize(s.customBoardSize)
+      : s.boardSize;
+    const emptyBoard = createEmptyBoard(previewSize);
+    boardHtml = renderBoardHtml(emptyBoard, previewSize, null, () => true);
+  } else {
+    boardHtml = renderBoardHtml(
+      g.board,
+      g.boardSize,
+      g.lastMove,
+      (idx, cell) => Boolean(cell) || g.status !== "playing" || g.currentTurn !== g.playerSymbol || g.thinking,
+    );
+  }
+
+  const players = g
+    ? `
+      <div class="players">
+        <div class="player-card ${g.currentTurn === g.playerSymbol && g.status === "playing" ? "active" : ""}">
+          <span>${g.playerSymbol}</span>
+          <strong>Bạn</strong>
+        </div>
+        <div class="player-card ${(g.currentTurn === g.aiSymbol || g.thinking) && g.status === "playing" ? "active" : ""}">
+          <span>${g.aiSymbol}</span>
+          <strong>Gemini${g.thinking ? " 🤔" : ""}</strong>
+        </div>
+      </div>`
+    : "";
+
+  const winOverlay = g
+    ? renderWinOverlay(
+        g.status,
+        g.winner,
+        g.winner === g.playerSymbol ? "Bạn" : "Gemini",
+      )
+    : "";
+
+  const app = document.querySelector("#app");
+  app.innerHTML = `
+    <main class="layout">
+      <section class="panel">
+        <div class="app-header">
+          <h1>Caro</h1>
+          <button id="theme-toggle-btn" class="theme-toggle" title="Chuyển chế độ sáng/tối" aria-label="Chuyển chế độ sáng/tối">
+            ${state.theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
+        ${leftPanel}
+        ${renderStatsBar()}
+      </section>
+
+      <section class="board-panel">
+        ${players}
+        ${boardHtml}
+        ${winOverlay}
+      </section>
+    </main>
+  `;
+
+  document.querySelector("#theme-toggle-btn").addEventListener("click", toggleTheme);
+  document.querySelector("#tab-online").addEventListener("click", () => {
+    state.geminiGame = null;
+    state.mode = "online";
+    render();
+  });
+  document.querySelector("#tab-ai").addEventListener("click", () => {
+    state.geminiGame = null;
+    state.mode = "ai";
+    render();
+  });
+  document.querySelector("#tab-local").addEventListener("click", () => {
+    state.geminiGame = null;
+    state.mode = "local";
+    render();
+  });
+
+  // Settings screen listeners
+  document.querySelector("#gemini-api-key")?.addEventListener("input", (e) => {
+    state.geminiSettings.apiKey = e.target.value;
+    localStorage.setItem(GEMINI_KEY, e.target.value);
+    // Enable/disable start button live
+    const startBtn = document.querySelector("#gemini-start-btn");
+    if (startBtn) startBtn.disabled = !e.target.value.trim();
+  });
+
+  document.querySelectorAll("input[name='boardSizePreset']").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value === "custom") {
+        state.geminiSettings.useCustomSize = true;
+      } else {
+        state.geminiSettings.useCustomSize = false;
+        state.geminiSettings.boardSize = Number(radio.value);
+      }
+      render();
+    });
+  });
+
+  document.querySelector("#custom-size-input")?.addEventListener("change", (event) => {
+    const val = parseInt(event.target.value, 10);
+    if (!isNaN(val)) {
+      state.geminiSettings.customBoardSize = geminiClampBoardSize(val);
+      render();
+    }
+  });
+
+  document.querySelector("#block-both-ends")?.addEventListener("change", (event) => {
+    state.geminiSettings.blockBothEnds = event.target.checked;
+  });
+
+  document.querySelector("#gemini-start-btn")?.addEventListener("click", startGeminiGame);
+  document.querySelector("#gemini-restart-btn")?.addEventListener("click", restartGeminiGame);
+  document.querySelector("#overlay-restart-btn")?.addEventListener("click", restartGeminiGame);
+  document.querySelector("#gemini-leave-btn")?.addEventListener("click", leaveGeminiGame);
+
+  document.querySelectorAll(".cell").forEach((cell) => {
+    cell.addEventListener("click", () => {
+      makeGeminiMoveLocal(Number(cell.dataset.index));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Online mode render
 // ---------------------------------------------------------------------------
 
@@ -1172,6 +1521,11 @@ function render() {
 
   if (state.mode === "local") {
     renderLocalMode();
+    return;
+  }
+
+  if (state.mode === "gemini") {
+    renderGeminiMode();
     return;
   }
 
@@ -1226,6 +1580,7 @@ function render() {
       <button class="mode-tab mode-tab--active" id="tab-online">🌐 Online</button>
       <button class="mode-tab" id="tab-ai">🤖 vs AI</button>
       <button class="mode-tab" id="tab-local">👥 2 Người</button>
+      <button class="mode-tab" id="tab-gemini">🧠 Gemini</button>
     </div>`;
 
   const app = document.querySelector("#app");
@@ -1308,6 +1663,10 @@ function render() {
   });
   document.querySelector("#tab-local").addEventListener("click", () => {
     state.mode = "local";
+    render();
+  });
+  document.querySelector("#tab-gemini").addEventListener("click", () => {
+    state.mode = "gemini";
     render();
   });
 

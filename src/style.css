@@ -159,6 +159,16 @@ p {
   color: var(--error-color);
 }
 
+.settings-hint {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin: 4px 0 0;
+}
+
+.settings-hint a {
+  color: var(--text-subtitle);
+}
+
 .players {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
