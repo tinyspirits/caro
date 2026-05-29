@@ -88,7 +88,9 @@ export async function getGroqMove(board, boardSize, aiSym, playerSym, apiKey, ru
 
   const idx = row * boardSize + col;
   if (board[idx] !== '') {
-    throw new Error('Groq ch\u1ecdn \u00f4 \u0111\u00e3 c\u00f3 qu\u00e2n: ' + row + ',' + col);
+    const err = new Error('Groq ch\u1ecdn \u00f4 \u0111\u00e3 c\u00f3 qu\u00e2n: ' + row + ',' + col);
+    err.code = 'OCCUPIED_CELL';
+    throw err;
   }
 
   return idx;

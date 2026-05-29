@@ -796,7 +796,10 @@ function applyGroqBoardMove(index, symbol) {
   render();
 }
 
-function scheduleGroqMove() {
+const GROQ_MAX_RETRIES = 3;
+const GROQ_RETRY_DELAY_MS = 500;
+
+function scheduleGroqMove(retryCount = 0) {
   if (!state.groqGame || state.groqGame.status !== "playing") return;
   state.groqGame.thinking = true;
   state.groqGame.error = "";
@@ -812,9 +815,14 @@ function scheduleGroqMove() {
     })
     .catch((err) => {
       if (!state.groqGame) return;
-      state.groqGame.error = `Groq API thất bại: ${err.message}`;
-      state.groqGame.thinking = false;
-      render();
+      const isOccupied = err.code === "OCCUPIED_CELL";
+      if (isOccupied && retryCount < GROQ_MAX_RETRIES) {
+        setTimeout(() => scheduleGroqMove(retryCount + 1), GROQ_RETRY_DELAY_MS);
+      } else {
+        state.groqGame.error = `Groq API thất bại: ${err.message}`;
+        state.groqGame.thinking = false;
+        render();
+      }
     });
 }
 
