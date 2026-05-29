@@ -13,8 +13,14 @@ const SCORE = {
 };
 
 // Score a consecutive run of `count` pieces with `openEnds` open ends (0, 1, or 2).
-function seqScore(count, openEnds) {
-  if (count >= 5) return SCORE.FIVE;
+// When blockBothEnds is true, an exactly-WIN_LENGTH run with 0 open ends is not a win.
+function seqScore(count, openEnds, blockBothEnds = false) {
+  if (count >= WIN_LENGTH) {
+    // Under blockBothEnds rule: exactly WIN_LENGTH-in-a-row that is blocked on both sides scores 0.
+    // Overlines (count > WIN_LENGTH) are always wins regardless of blocking.
+    if (blockBothEnds && count === WIN_LENGTH && openEnds === 0) return 0;
+    return SCORE.FIVE;
+  }
   if (openEnds === 0) return 0;
   switch (count) {
     case 4: return openEnds === 2 ? SCORE.OPEN_FOUR : SCORE.HALF_FOUR;
@@ -25,7 +31,8 @@ function seqScore(count, openEnds) {
 }
 
 // Score all sequences of `symbol` across every row, column, and diagonal.
-function evalBoardFor(board, boardSize, symbol) {
+function evalBoardFor(board, boardSize, symbol, rules = null) {
+  const blockBothEnds = rules?.blockBothEnds ?? false;
   let total = 0;
 
   const scoreLine = (getCell) => {
@@ -42,7 +49,15 @@ function evalBoardFor(board, boardSize, symbol) {
       while (fwdK < boardSize && getCell(fwdK) === '') { fwdSpace++; fwdK++; }
       // Skip sequences whose total window can never reach WIN_LENGTH
       if (count + bwdSpace + fwdSpace < WIN_LENGTH) { i = j; continue; }
-      total += seqScore(count, (bwdSpace > 0 ? 1 : 0) + (fwdSpace > 0 ? 1 : 0));
+      // Under blockBothEnds: if the window is exactly WIN_LENGTH and both outer ends are
+      // blocked (wall or opponent), any 5-in-a-row that fills this window will itself be
+      // blocked on both sides — it can never be a valid win, so score 0.
+      if (blockBothEnds && count + bwdSpace + fwdSpace === WIN_LENGTH) {
+        const bwdFarBlocked = k < 0 || getCell(k) !== symbol;
+        const fwdFarBlocked = fwdK >= boardSize || getCell(fwdK) !== symbol;
+        if (bwdFarBlocked && fwdFarBlocked) { i = j; continue; }
+      }
+      total += seqScore(count, (bwdSpace > 0 ? 1 : 0) + (fwdSpace > 0 ? 1 : 0), blockBothEnds);
       i = j;
     }
   };
@@ -78,12 +93,13 @@ function evalBoardFor(board, boardSize, symbol) {
 // over attacking when scores are equal, which produces safer play.
 const DEFENSIVE_BIAS = 1.05;
 
-function evaluateBoard(board, boardSize, aiSym, playerSym) {
-  return evalBoardFor(board, boardSize, aiSym) - evalBoardFor(board, boardSize, playerSym) * DEFENSIVE_BIAS;
+function evaluateBoard(board, boardSize, aiSym, playerSym, rules = null) {
+  return evalBoardFor(board, boardSize, aiSym, rules) - evalBoardFor(board, boardSize, playerSym, rules) * DEFENSIVE_BIAS;
 }
 
 // Quick per-cell score used for move ordering (cheap directional scan).
-function quickMoveScore(board, boardSize, idx, aiSym, playerSym) {
+function quickMoveScore(board, boardSize, idx, aiSym, playerSym, rules = null) {
+  const blockBothEnds = rules?.blockBothEnds ?? false;
   const row = Math.floor(idx / boardSize);
   const col = idx % boardSize;
   let score = 0;
@@ -101,6 +117,8 @@ function quickMoveScore(board, boardSize, idx, aiSym, playerSym) {
       while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === '') {
         fwdOpen++; r += dr; c += dc;
       }
+      // Save far-forward position for blockBothEnds check
+      const fwdFarR = r, fwdFarC = c;
       r = row - dr; c = col - dc;
       while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === sym) {
         cnt++; r -= dr; c -= dc;
@@ -112,7 +130,17 @@ function quickMoveScore(board, boardSize, idx, aiSym, playerSym) {
       board[idx] = '';
       // Skip if window can never reach WIN_LENGTH
       if (cnt + fwdOpen + bwdOpen < WIN_LENGTH) continue;
-      score += seqScore(cnt, (fwdOpen > 0 ? 1 : 0) + (bwdOpen > 0 ? 1 : 0)) * weight;
+      // Under blockBothEnds: skip if only possible win is trapped on both ends
+      if (blockBothEnds && cnt + fwdOpen + bwdOpen === WIN_LENGTH) {
+        const fwdFarCell = fwdFarR >= 0 && fwdFarR < boardSize && fwdFarC >= 0 && fwdFarC < boardSize
+          ? board[fwdFarR * boardSize + fwdFarC] : null;
+        const bwdFarCell = r >= 0 && r < boardSize && c >= 0 && c < boardSize
+          ? board[r * boardSize + c] : null;
+        const fwdFarBlocked = fwdFarCell === null || (fwdFarCell !== '' && fwdFarCell !== sym);
+        const bwdFarBlocked = bwdFarCell === null || (bwdFarCell !== '' && bwdFarCell !== sym);
+        if (fwdFarBlocked && bwdFarBlocked) continue;
+      }
+      score += seqScore(cnt, (fwdOpen > 0 ? 1 : 0) + (bwdOpen > 0 ? 1 : 0), blockBothEnds) * weight;
     }
   }
   return score;
@@ -190,12 +218,12 @@ function getCandidates(board, boardSize, range) {
 
 // Sort candidates by quick score (best first) and truncate.
 // biasMap (optional Map<index, number>) adds a training-data bonus to scores.
-function topCandidates(board, boardSize, candidates, aiSym, playerSym, limit, biasMap = null) {
+function topCandidates(board, boardSize, candidates, aiSym, playerSym, limit, biasMap = null, rules = null) {
   const BIAS_SCALE = 50; // keep bias small relative to heuristic scores
   return candidates
     .map((idx) => ({
       idx,
-      score: quickMoveScore(board, boardSize, idx, aiSym, playerSym)
+      score: quickMoveScore(board, boardSize, idx, aiSym, playerSym, rules)
         + (biasMap ? (biasMap.get(idx) || 0) * BIAS_SCALE : 0),
     }))
     .sort((a, b) => b.score - a.score)
@@ -212,12 +240,12 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
     }
   }
 
-  if (depth === 0) return evaluateBoard(board, boardSize, aiSym, playerSym);
+  if (depth === 0) return evaluateBoard(board, boardSize, aiSym, playerSym, rules);
 
   const range = depth >= 3 ? 1 : 2;
   const limit = depth >= 3 ? 10 : 18;
   const allCands = getCandidates(board, boardSize, range);
-  const cands = topCandidates(board, boardSize, allCands, aiSym, playerSym, limit, biasMap);
+  const cands = topCandidates(board, boardSize, allCands, aiSym, playerSym, limit, biasMap, rules);
 
   const sym = isMaximizing ? aiSym : playerSym;
 
@@ -287,7 +315,7 @@ function level3Move(board, boardSize, aiSym, playerSym, biasMap = null, rules = 
   let best = -Infinity, bestIdx = cands[0];
   for (const idx of cands) {
     work[idx] = aiSym;
-    const s = evaluateBoard(work, boardSize, aiSym, playerSym)
+    const s = evaluateBoard(work, boardSize, aiSym, playerSym, rules)
       + (biasMap ? (biasMap.get(idx) || 0) * 50 : 0);
     work[idx] = '';
     if (s > best) { best = s; bestIdx = idx; }
@@ -313,7 +341,7 @@ function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null, 
   }
 
   const limit = depth >= 4 ? 12 : 20;
-  const cands = topCandidates(work, boardSize, allCands, aiSym, playerSym, limit, biasMap);
+  const cands = topCandidates(work, boardSize, allCands, aiSym, playerSym, limit, biasMap, rules);
 
   let best = -Infinity, bestIdx = cands[0];
   for (const idx of cands) {
