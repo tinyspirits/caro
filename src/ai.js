@@ -159,16 +159,22 @@ function getCandidates(board, boardSize, range) {
 }
 
 // Sort candidates by quick score (best first) and truncate.
-function topCandidates(board, boardSize, candidates, aiSym, playerSym, limit) {
+// biasMap (optional Map<index, number>) adds a training-data bonus to scores.
+function topCandidates(board, boardSize, candidates, aiSym, playerSym, limit, biasMap = null) {
+  const BIAS_SCALE = 50; // keep bias small relative to heuristic scores
   return candidates
-    .map((idx) => ({ idx, score: quickMoveScore(board, boardSize, idx, aiSym, playerSym) }))
+    .map((idx) => ({
+      idx,
+      score: quickMoveScore(board, boardSize, idx, aiSym, playerSym)
+        + (biasMap ? (biasMap.get(idx) || 0) * BIAS_SCALE : 0),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((x) => x.idx);
 }
 
 // Alpha-beta minimax. `lastIdx` is the index of the most recent move (for win check).
-function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, playerSym, lastIdx) {
+function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, playerSym, lastIdx, biasMap = null) {
   if (lastIdx !== null) {
     const sym = isMaximizing ? playerSym : aiSym; // last move was by the other side
     if (isWinAtIndex(board, lastIdx, sym, boardSize)) {
@@ -181,7 +187,7 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
   const range = depth >= 3 ? 1 : 2;
   const limit = depth >= 3 ? 10 : 18;
   const allCands = getCandidates(board, boardSize, range);
-  const cands = topCandidates(board, boardSize, allCands, aiSym, playerSym, limit);
+  const cands = topCandidates(board, boardSize, allCands, aiSym, playerSym, limit, biasMap);
 
   const sym = isMaximizing ? aiSym : playerSym;
 
@@ -189,7 +195,7 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
     let best = -Infinity;
     for (const idx of cands) {
       board[idx] = sym;
-      const score = minimax(board, boardSize, depth - 1, alpha, beta, false, aiSym, playerSym, idx);
+      const score = minimax(board, boardSize, depth - 1, alpha, beta, false, aiSym, playerSym, idx, biasMap);
       board[idx] = '';
       if (score > best) best = score;
       if (score > alpha) alpha = score;
@@ -200,7 +206,7 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
     let best = Infinity;
     for (const idx of cands) {
       board[idx] = sym;
-      const score = minimax(board, boardSize, depth - 1, alpha, beta, true, aiSym, playerSym, idx);
+      const score = minimax(board, boardSize, depth - 1, alpha, beta, true, aiSym, playerSym, idx, biasMap);
       board[idx] = '';
       if (score < best) best = score;
       if (score < beta) beta = score;
@@ -235,7 +241,7 @@ function level2Move(board, boardSize, aiSym, playerSym) {
 }
 
 // Level 3: greedy – picks the candidate with the best immediate board eval.
-function level3Move(board, boardSize, aiSym, playerSym) {
+function level3Move(board, boardSize, aiSym, playerSym, biasMap = null) {
   const work = [...board];
   const cands = getCandidates(work, boardSize, 2);
   for (const idx of cands) {
@@ -251,7 +257,8 @@ function level3Move(board, boardSize, aiSym, playerSym) {
   let best = -Infinity, bestIdx = cands[0];
   for (const idx of cands) {
     work[idx] = aiSym;
-    const s = evaluateBoard(work, boardSize, aiSym, playerSym);
+    const s = evaluateBoard(work, boardSize, aiSym, playerSym)
+      + (biasMap ? (biasMap.get(idx) || 0) * 50 : 0);
     work[idx] = '';
     if (s > best) { best = s; bestIdx = idx; }
   }
@@ -259,7 +266,7 @@ function level3Move(board, boardSize, aiSym, playerSym) {
 }
 
 // Levels 4 & 5: minimax at given depth.
-function minimaxMove(board, boardSize, aiSym, playerSym, depth) {
+function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null) {
   const work = [...board];
   const allCands = getCandidates(work, boardSize, 2);
 
@@ -276,12 +283,12 @@ function minimaxMove(board, boardSize, aiSym, playerSym, depth) {
   }
 
   const limit = depth >= 4 ? 12 : 20;
-  const cands = topCandidates(work, boardSize, allCands, aiSym, playerSym, limit);
+  const cands = topCandidates(work, boardSize, allCands, aiSym, playerSym, limit, biasMap);
 
   let best = -Infinity, bestIdx = cands[0];
   for (const idx of cands) {
     work[idx] = aiSym;
-    const score = minimax(work, boardSize, depth - 1, -Infinity, Infinity, false, aiSym, playerSym, idx);
+    const score = minimax(work, boardSize, depth - 1, -Infinity, Infinity, false, aiSym, playerSym, idx, biasMap);
     work[idx] = '';
     if (score > best) { best = score; bestIdx = idx; }
   }
@@ -296,15 +303,16 @@ function minimaxMove(board, boardSize, aiSym, playerSym, depth) {
  * @param {string}   aiSym      - AI's symbol ("X" or "O")
  * @param {string}   playerSym  - human's symbol
  * @param {number}   difficulty - 1 (easiest) … 5 (hardest)
+ * @param {Map<number,number>} [biasMap] - optional training bias (cell → score bonus)
  * @returns {number} index of the chosen cell
  */
-export function getAIMove(board, boardSize, aiSym, playerSym, difficulty) {
+export function getAIMove(board, boardSize, aiSym, playerSym, difficulty, biasMap = null) {
   switch (difficulty) {
     case 1: return randomMove(board);
     case 2: return level2Move(board, boardSize, aiSym, playerSym);
-    case 3: return level3Move(board, boardSize, aiSym, playerSym);
-    case 4: return minimaxMove(board, boardSize, aiSym, playerSym, 2);
-    case 5: return minimaxMove(board, boardSize, aiSym, playerSym, 4);
+    case 3: return level3Move(board, boardSize, aiSym, playerSym, biasMap);
+    case 4: return minimaxMove(board, boardSize, aiSym, playerSym, 2, biasMap);
+    case 5: return minimaxMove(board, boardSize, aiSym, playerSym, 4, biasMap);
     default: return randomMove(board);
   }
 }
