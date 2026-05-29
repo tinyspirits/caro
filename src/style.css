@@ -429,3 +429,13 @@ p {
   cursor: pointer;
   width: 100%;
 }
+
+/* Stats bar */
+.stats-bar {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--text-subtitle);
+  padding: 4px 0;
+}
