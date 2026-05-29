@@ -35,9 +35,14 @@ function evalBoardFor(board, boardSize, symbol) {
       let j = i;
       while (j < boardSize && getCell(j) === symbol) j++;
       const count = j - i;
-      const bwd = i > 0 && getCell(i - 1) === '';
-      const fwd = j < boardSize && getCell(j) === '';
-      total += seqScore(count, (bwd ? 1 : 0) + (fwd ? 1 : 0));
+      // Count contiguous empty space in each direction
+      let bwdSpace = 0, k = i - 1;
+      while (k >= 0 && getCell(k) === '') { bwdSpace++; k--; }
+      let fwdSpace = 0; k = j;
+      while (k < boardSize && getCell(k) === '') { fwdSpace++; k++; }
+      // Skip sequences whose total window can never reach WIN_LENGTH
+      if (count + bwdSpace + fwdSpace < WIN_LENGTH) { i = j; continue; }
+      total += seqScore(count, (bwdSpace > 0 ? 1 : 0) + (fwdSpace > 0 ? 1 : 0));
       i = j;
     }
   };
@@ -87,19 +92,27 @@ function quickMoveScore(board, boardSize, idx, aiSym, playerSym) {
   for (const [dr, dc] of dirs) {
     for (const [sym, weight] of [[aiSym, 1.0], [playerSym, 0.95]]) {
       board[idx] = sym;
-      let cnt = 1, openEnds = 0;
+      let cnt = 1;
       let r = row + dr, c = col + dc;
       while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === sym) {
         cnt++; r += dr; c += dc;
       }
-      if (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === '') openEnds++;
+      let fwdOpen = 0;
+      while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === '') {
+        fwdOpen++; r += dr; c += dc;
+      }
       r = row - dr; c = col - dc;
       while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === sym) {
         cnt++; r -= dr; c -= dc;
       }
-      if (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === '') openEnds++;
-      score += seqScore(cnt, openEnds) * weight;
+      let bwdOpen = 0;
+      while (r >= 0 && r < boardSize && c >= 0 && c < boardSize && board[r * boardSize + c] === '') {
+        bwdOpen++; r -= dr; c -= dc;
+      }
       board[idx] = '';
+      // Skip if window can never reach WIN_LENGTH
+      if (cnt + fwdOpen + bwdOpen < WIN_LENGTH) continue;
+      score += seqScore(cnt, (fwdOpen > 0 ? 1 : 0) + (bwdOpen > 0 ? 1 : 0)) * weight;
     }
   }
   return score;
