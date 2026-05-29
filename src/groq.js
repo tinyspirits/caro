@@ -60,7 +60,7 @@ export async function getGroqMove(board, boardSize, aiSym, playerSym, apiKey, ru
   });
 
   if (!response.ok) {
-    let msg = 'Groq API loi: ' + response.status;
+    let msg = 'Groq API l\u1ed7i: ' + response.status;
     try {
       const errBody = await response.json();
       if (errBody?.error?.message) msg = errBody.error.message;
@@ -76,19 +76,19 @@ export async function getGroqMove(board, boardSize, aiSym, playerSym, apiKey, ru
   // Accept "row,col" anywhere in the response
   const match = text.match(/(\d+)\s*,\s*(\d+)/);
   if (!match) {
-    throw new Error('Groq tra ve noi dung khong hop le: "' + text + '"');
+    throw new Error('Groq tr\u1ea3 v\u1ec1 n\u1ed9i dung kh\u00f4ng h\u1ee3p l\u1ec7: "' + text + '"');
   }
 
   const row = parseInt(match[1], 10);
   const col = parseInt(match[2], 10);
 
   if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
-    throw new Error('Groq chon o ngoai ban co: ' + row + ',' + col);
+    throw new Error('Groq ch\u1ecdn \u00f4 ngo\u00e0i b\u00e0n c\u1edd: ' + row + ',' + col);
   }
 
   const idx = row * boardSize + col;
   if (board[idx] !== '') {
-    throw new Error('Groq chon o da co quan: ' + row + ',' + col);
+    throw new Error('Groq ch\u1ecdn \u00f4 \u0111\u00e3 c\u00f3 qu\u00e2n: ' + row + ',' + col);
   }
 
   return idx;
