@@ -782,21 +782,9 @@ function scheduleGeminiMove() {
     })
     .catch((err) => {
       if (!state.geminiGame) return;
-      // Fall back to local level-3 AI so the game can continue
-      state.geminiGame.error = `Gemini API thất bại – đã dùng AI cục bộ thay thế. (${err.message})`;
+      state.geminiGame.error = `Gemini API thất bại: ${err.message}`;
       state.geminiGame.thinking = false;
-      const fallbackIdx = getAIMove(
-        [...state.geminiGame.board],
-        state.geminiGame.boardSize,
-        state.geminiGame.aiSymbol,
-        state.geminiGame.playerSymbol,
-        3,
-      );
-      if (fallbackIdx !== -1 && fallbackIdx !== null) {
-        applyGeminiBoardMove(fallbackIdx, state.geminiGame.aiSymbol);
-      } else {
-        render();
-      }
+      render();
     });
 }
 
