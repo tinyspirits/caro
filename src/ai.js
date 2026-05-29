@@ -118,24 +118,40 @@ function quickMoveScore(board, boardSize, idx, aiSym, playerSym) {
   return score;
 }
 
-// Check if placing `symbol` at `index` creates a win.
-function isWinAtIndex(board, index, symbol, boardSize) {
+// Check if an end cell blocks a sequence: wall (out of bounds) or opponent piece = blocked.
+function isEndBlockedAI(board, row, col, boardSize, symbol) {
+  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) return true; // wall = blocked
+  const cell = board[row * boardSize + col];
+  return cell !== '' && cell !== symbol;
+}
+
+// Check if placing `symbol` at `index` creates a valid win (respects blockBothEnds rule).
+function isWinAtIndex(board, index, symbol, boardSize, rules = null) {
   const row = Math.floor(index / boardSize);
   const col = index % boardSize;
   const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
   for (const [dr, dc] of dirs) {
-    let cnt = 1;
+    let fwd = 0;
     for (let d = 1; d < WIN_LENGTH; d++) {
       const r = row + dr * d, c = col + dc * d;
       if (r < 0 || r >= boardSize || c < 0 || c >= boardSize || board[r * boardSize + c] !== symbol) break;
-      cnt++;
+      fwd++;
     }
+    let bwd = 0;
     for (let d = 1; d < WIN_LENGTH; d++) {
       const r = row - dr * d, c = col - dc * d;
       if (r < 0 || r >= boardSize || c < 0 || c >= boardSize || board[r * boardSize + c] !== symbol) break;
-      cnt++;
+      bwd++;
     }
-    if (cnt >= WIN_LENGTH) return true;
+    const cnt = 1 + fwd + bwd;
+    if (cnt >= WIN_LENGTH) {
+      if (rules?.blockBothEnds && cnt === WIN_LENGTH) {
+        const fwdBlocked = isEndBlockedAI(board, row + (fwd + 1) * dr, col + (fwd + 1) * dc, boardSize, symbol);
+        const bwdBlocked = isEndBlockedAI(board, row - (bwd + 1) * dr, col - (bwd + 1) * dc, boardSize, symbol);
+        if (fwdBlocked && bwdBlocked) continue;
+      }
+      return true;
+    }
   }
   return false;
 }
@@ -187,10 +203,10 @@ function topCandidates(board, boardSize, candidates, aiSym, playerSym, limit, bi
 }
 
 // Alpha-beta minimax. `lastIdx` is the index of the most recent move (for win check).
-function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, playerSym, lastIdx, biasMap = null) {
+function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, playerSym, lastIdx, biasMap = null, rules = null) {
   if (lastIdx !== null) {
     const sym = isMaximizing ? playerSym : aiSym; // last move was by the other side
-    if (isWinAtIndex(board, lastIdx, sym, boardSize)) {
+    if (isWinAtIndex(board, lastIdx, sym, boardSize, rules)) {
       return isMaximizing ? -(SCORE.FIVE + depth) : (SCORE.FIVE + depth);
     }
   }
@@ -208,7 +224,7 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
     let best = -Infinity;
     for (const idx of cands) {
       board[idx] = sym;
-      const score = minimax(board, boardSize, depth - 1, alpha, beta, false, aiSym, playerSym, idx, biasMap);
+      const score = minimax(board, boardSize, depth - 1, alpha, beta, false, aiSym, playerSym, idx, biasMap, rules);
       board[idx] = '';
       if (score > best) best = score;
       if (score > alpha) alpha = score;
@@ -219,7 +235,7 @@ function minimax(board, boardSize, depth, alpha, beta, isMaximizing, aiSym, play
     let best = Infinity;
     for (const idx of cands) {
       board[idx] = sym;
-      const score = minimax(board, boardSize, depth - 1, alpha, beta, true, aiSym, playerSym, idx, biasMap);
+      const score = minimax(board, boardSize, depth - 1, alpha, beta, true, aiSym, playerSym, idx, biasMap, rules);
       board[idx] = '';
       if (score < best) best = score;
       if (score < beta) beta = score;
@@ -237,34 +253,34 @@ function randomMove(board) {
 }
 
 // Level 2: only wins immediately or blocks, otherwise random candidate.
-function level2Move(board, boardSize, aiSym, playerSym) {
+function level2Move(board, boardSize, aiSym, playerSym, rules = null) {
   const work = [...board];
   const cands = getCandidates(work, boardSize, 2);
   for (const idx of cands) {
     work[idx] = aiSym;
-    if (isWinAtIndex(work, idx, aiSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, aiSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
   for (const idx of cands) {
     work[idx] = playerSym;
-    if (isWinAtIndex(work, idx, playerSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, playerSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
   return cands[Math.floor(Math.random() * cands.length)];
 }
 
 // Level 3: greedy – picks the candidate with the best immediate board eval.
-function level3Move(board, boardSize, aiSym, playerSym, biasMap = null) {
+function level3Move(board, boardSize, aiSym, playerSym, biasMap = null, rules = null) {
   const work = [...board];
   const cands = getCandidates(work, boardSize, 2);
   for (const idx of cands) {
     work[idx] = aiSym;
-    if (isWinAtIndex(work, idx, aiSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, aiSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
   for (const idx of cands) {
     work[idx] = playerSym;
-    if (isWinAtIndex(work, idx, playerSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, playerSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
   let best = -Infinity, bestIdx = cands[0];
@@ -279,19 +295,19 @@ function level3Move(board, boardSize, aiSym, playerSym, biasMap = null) {
 }
 
 // Levels 4 & 5: minimax at given depth.
-function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null) {
+function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null, rules = null) {
   const work = [...board];
   const allCands = getCandidates(work, boardSize, 2);
 
   // Immediate checks first (free optimisation)
   for (const idx of allCands) {
     work[idx] = aiSym;
-    if (isWinAtIndex(work, idx, aiSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, aiSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
   for (const idx of allCands) {
     work[idx] = playerSym;
-    if (isWinAtIndex(work, idx, playerSym, boardSize)) { work[idx] = ''; return idx; }
+    if (isWinAtIndex(work, idx, playerSym, boardSize, rules)) { work[idx] = ''; return idx; }
     work[idx] = '';
   }
 
@@ -301,7 +317,7 @@ function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null) 
   let best = -Infinity, bestIdx = cands[0];
   for (const idx of cands) {
     work[idx] = aiSym;
-    const score = minimax(work, boardSize, depth - 1, -Infinity, Infinity, false, aiSym, playerSym, idx, biasMap);
+    const score = minimax(work, boardSize, depth - 1, -Infinity, Infinity, false, aiSym, playerSym, idx, biasMap, rules);
     work[idx] = '';
     if (score > best) { best = score; bestIdx = idx; }
   }
@@ -317,15 +333,16 @@ function minimaxMove(board, boardSize, aiSym, playerSym, depth, biasMap = null) 
  * @param {string}   playerSym  - human's symbol
  * @param {number}   difficulty - 1 (easiest) … 5 (hardest)
  * @param {Map<number,number>} [biasMap] - optional training bias (cell → score bonus)
+ * @param {object}   [rules]    - game rules, e.g. { blockBothEnds: true }
  * @returns {number} index of the chosen cell
  */
-export function getAIMove(board, boardSize, aiSym, playerSym, difficulty, biasMap = null) {
+export function getAIMove(board, boardSize, aiSym, playerSym, difficulty, biasMap = null, rules = null) {
   switch (difficulty) {
     case 1: return randomMove(board);
-    case 2: return level2Move(board, boardSize, aiSym, playerSym);
-    case 3: return level3Move(board, boardSize, aiSym, playerSym, biasMap);
-    case 4: return minimaxMove(board, boardSize, aiSym, playerSym, 2, biasMap);
-    case 5: return minimaxMove(board, boardSize, aiSym, playerSym, 4, biasMap);
+    case 2: return level2Move(board, boardSize, aiSym, playerSym, rules);
+    case 3: return level3Move(board, boardSize, aiSym, playerSym, biasMap, rules);
+    case 4: return minimaxMove(board, boardSize, aiSym, playerSym, 2, biasMap, rules);
+    case 5: return minimaxMove(board, boardSize, aiSym, playerSym, 4, biasMap, rules);
     default: return randomMove(board);
   }
 }
