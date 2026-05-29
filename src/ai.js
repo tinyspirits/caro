@@ -38,8 +38,8 @@ function evalBoardFor(board, boardSize, symbol) {
       // Count contiguous empty space in each direction
       let bwdSpace = 0, k = i - 1;
       while (k >= 0 && getCell(k) === '') { bwdSpace++; k--; }
-      let fwdSpace = 0; k = j;
-      while (k < boardSize && getCell(k) === '') { fwdSpace++; k++; }
+      let fwdSpace = 0, fwdK = j;
+      while (fwdK < boardSize && getCell(fwdK) === '') { fwdSpace++; fwdK++; }
       // Skip sequences whose total window can never reach WIN_LENGTH
       if (count + bwdSpace + fwdSpace < WIN_LENGTH) { i = j; continue; }
       total += seqScore(count, (bwdSpace > 0 ? 1 : 0) + (fwdSpace > 0 ? 1 : 0));
@@ -126,6 +126,7 @@ function isEndBlockedAI(board, row, col, boardSize, symbol) {
 }
 
 // Check if placing `symbol` at `index` creates a valid win (respects blockBothEnds rule).
+// @param {object|null} rules - game rules object, e.g. { blockBothEnds: true }
 function isWinAtIndex(board, index, symbol, boardSize, rules = null) {
   const row = Math.floor(index / boardSize);
   const col = index % boardSize;
