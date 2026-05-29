@@ -775,7 +775,7 @@ function scheduleGeminiMove() {
   const g = state.geminiGame;
   const { board, boardSize, aiSymbol, playerSymbol, rules } = g;
 
-  getGeminiMove([...board], boardSize, aiSymbol, playerSymbol, state.geminiSettings.apiKey)
+  getGeminiMove([...board], boardSize, aiSymbol, playerSymbol, state.geminiSettings.apiKey, rules)
     .then((idx) => {
       if (!state.geminiGame || state.geminiGame.status !== "playing") return;
       applyGeminiBoardMove(idx, state.geminiGame.aiSymbol);
@@ -783,7 +783,7 @@ function scheduleGeminiMove() {
     .catch((err) => {
       if (!state.geminiGame) return;
       // Fall back to local level-3 AI so the game can continue
-      state.geminiGame.error = `Gemini lỗi: ${err.message}. Đã dùng AI cục bộ thay thế.`;
+      state.geminiGame.error = `Gemini API thất bại – đã dùng AI cục bộ thay thế. (${err.message})`;
       state.geminiGame.thinking = false;
       const fallbackIdx = getAIMove(
         [...state.geminiGame.board],
